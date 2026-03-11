@@ -1,0 +1,17 @@
+{
+  "crypto": "bitcoin",
+  "fiat": "usd",
+  "interval_sec": 300,
+  "display_model": "epd2in13_V2",
+  "cores_invertidas": false,
+  "buzzer_ativo": false,
+  "buzzer_gpio": 18,
+  "buzzer_volume": 80,
+  "buzzer_wpm": 15,
+  "buzzer_pattern": "",
+  "sound_high": "3",
+  "sound_low": "5",
+  "alerta_acima": 0,
+  "alerta_abaixo": 0,
+  "alerta_disparado": false
+}

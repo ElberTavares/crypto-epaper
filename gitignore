@@ -1,0 +1,23 @@
+# Python virtual environment
+venv/
+
+# Waveshare driver (downloaded by setup.sh)
+waveshare_epd/
+
+# Fonts (downloaded by setup.sh)
+fonts/
+
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.deb

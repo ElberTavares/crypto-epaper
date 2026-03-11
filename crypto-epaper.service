@@ -1,0 +1,17 @@
+[Unit]
+Description=Crypto E-Paper Display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=INSTALL_USER
+WorkingDirectory=INSTALL_PATH
+ExecStart=INSTALL_PATH/venv/bin/python display_controller.py
+Restart=always
+RestartSec=30
+StandardOutput=append:INSTALL_PATH/logs/display.log
+StandardError=append:INSTALL_PATH/logs/display.log
+
+[Install]
+WantedBy=multi-user.target

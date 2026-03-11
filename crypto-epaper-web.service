@@ -1,0 +1,16 @@
+[Unit]
+Description=Crypto E-Paper Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=INSTALL_USER
+WorkingDirectory=INSTALL_PATH
+ExecStart=INSTALL_PATH/venv/bin/python web_server.py
+Restart=always
+RestartSec=10
+StandardOutput=append:INSTALL_PATH/logs/web.log
+StandardError=append:INSTALL_PATH/logs/web.log
+
+[Install]
+WantedBy=multi-user.target
