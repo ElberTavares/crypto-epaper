@@ -142,7 +142,7 @@ sudo raspi-config nonint do_spi 0 && sudo reboot
 ## ⚙️ Installation
 
 ```bash
-git clone https://github.com/SEU_USUARIO/crypto-epaper.git ~/crypto-epaper/files
+git clone https://github.com/ElberTavares/crypto-epaper.git ~/crypto-epaper/files
 cd ~/crypto-epaper/files
 bash setup.sh
 sudo reboot
@@ -374,7 +374,7 @@ crontab -e
 ```
 
 ---
-
+git
 ### Painel WEB Features
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/904c80ae-057a-4a6f-a1ed-6ea266a31eeb" />
@@ -435,6 +435,7 @@ lgpio>=0.2
 ## 📄 License
 
 MIT — use it, modify it, share it freely.
+THX Claude
 
 ---
 
