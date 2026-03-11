@@ -30,10 +30,12 @@
 ## 📸 Display Preview
 
 **Online — normal operation:**
+
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/d83b8c6e-ff93-4a57-8bf5-1c76b655ec40" />
 
 
 **Offline — no internet connection:**
+
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/1e5453f0-100e-4eb3-a2c0-c45c07376af0" />
 
 
