@@ -222,6 +222,8 @@ http://crypto-epaper.local:8080
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/904c80ae-057a-4a6f-a1ed-6ea266a31eeb" />
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/58fcc4a8-a446-41a5-b4e6-506e88d95085" />
+<img width="500" height="154" alt="image" src="https://github.com/user-attachments/assets/97c7d500-1782-4de8-b061-1681a8f9370a" />
+
 
 ---
 
