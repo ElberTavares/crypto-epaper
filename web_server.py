@@ -2,9 +2,10 @@
 """
 web_server.py - Flask web dashboard
 Local configuration panel served on port 8080.
+Includes Wi-Fi configuration page for when running in Access Point mode.
 """
 
-import json, logging, subprocess, threading
+import json, logging, subprocess, threading, time
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
@@ -58,7 +59,239 @@ def save_config(cfg):
         json.dump(cfg, f, indent=2)
 
 
-HTML = """
+def is_online() -> bool:
+    try:
+        import socket
+        socket.setdefaulttimeout(3)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+        return True
+    except Exception:
+        return False
+
+
+def ap_is_active() -> bool:
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "NAME,TYPE", "con", "show", "--active"],
+            capture_output=True, text=True, timeout=5
+        )
+        return "crypto-epaper" in result.stdout
+    except Exception:
+        return False
+
+
+def scan_wifi_networks() -> list:
+    """Scan for available Wi-Fi networks."""
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
+            capture_output=True, text=True, timeout=15
+        )
+        networks = []
+        seen = set()
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(":")
+            if len(parts) >= 2:
+                ssid = parts[0].strip()
+                signal = parts[1].strip() if len(parts) > 1 else "?"
+                security = parts[2].strip() if len(parts) > 2 else ""
+                if ssid and ssid not in seen and ssid != "crypto-epaper":
+                    seen.add(ssid)
+                    networks.append({
+                        "ssid": ssid,
+                        "signal": int(signal) if signal.isdigit() else 0,
+                        "secured": bool(security and security != "--"),
+                    })
+        networks.sort(key=lambda x: x["signal"], reverse=True)
+        return networks[:20]
+    except Exception as e:
+        log.error(f"Wi-Fi scan error: {e}")
+        return []
+
+
+def connect_wifi(ssid: str, password: str) -> bool:
+    """Connect to a Wi-Fi network."""
+    try:
+        # Remove existing connection for this SSID if any
+        subprocess.run(["nmcli", "connection", "delete", ssid],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+            capture_output=True, text=True, timeout=30
+        )
+        success = result.returncode == 0
+        log.info(f"Wi-Fi connect '{ssid}': {'ok' if success else result.stderr.strip()}")
+        return success
+    except Exception as e:
+        log.error(f"Wi-Fi connect error: {e}")
+        return False
+
+
+# ── HTML Templates ─────────────────────────────────────────────────────────────
+
+WIFI_PAGE = """
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wi-Fi Setup — Crypto E-Paper</title>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2d3147;--accent:#6c63ff;
+      --text:#e2e8f0;--muted:#8892a4;--green:#34d399;--red:#f87171;--yellow:#fbbf24;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;
+     min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px;}
+h1{font-size:1.4rem;margin-bottom:4px;}
+.subtitle{color:var(--muted);font-size:.85rem;margin-bottom:24px;text-align:center;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+      padding:24px;width:100%;max-width:420px;margin-bottom:16px;}
+.card h2{font-size:1rem;color:var(--accent);margin-bottom:16px;}
+.ap-banner{background:#1e3a5f;border:1px solid #2563eb;border-radius:10px;
+           padding:14px 16px;margin-bottom:20px;width:100%;max-width:420px;
+           font-size:.85rem;line-height:1.6;}
+.ap-banner strong{color:#60a5fa;}
+label{display:block;color:var(--muted);font-size:.8rem;margin-bottom:4px;
+      margin-top:14px;text-transform:uppercase;letter-spacing:.05em;}
+input[type=text],input[type=password]{width:100%;background:var(--bg);
+  border:1px solid var(--border);color:var(--text);padding:10px 12px;
+  border-radius:8px;font-size:.95rem;}
+.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;
+     font-size:1rem;font-weight:600;cursor:pointer;margin-top:12px;transition:opacity .2s;}
+.btn:hover{opacity:.85;}
+.btn-primary{background:var(--accent);color:white;}
+.btn-scan{background:#1f2937;color:var(--text);margin-bottom:8px;}
+.network-list{margin-top:12px;}
+.network-item{display:flex;justify-content:space-between;align-items:center;
+              padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+              margin-bottom:6px;cursor:pointer;transition:border-color .2s;}
+.network-item:hover,.network-item.selected{border-color:var(--accent);}
+.network-ssid{font-size:.9rem;font-weight:500;}
+.network-meta{font-size:.75rem;color:var(--muted);}
+.signal-bar{display:inline-block;width:8px;border-radius:2px;margin-right:1px;vertical-align:bottom;}
+.status{font-size:.85rem;text-align:center;padding:10px;border-radius:8px;margin-top:8px;}
+.status.ok{background:#064e3b;color:var(--green);}
+.status.err{background:#450a0a;color:var(--red);}
+.status.loading{background:#1f2937;color:var(--muted);}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);
+         border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;
+         margin-right:6px;vertical-align:middle;}
+@keyframes spin{to{transform:rotate(360deg)}}
+a.back{display:block;text-align:center;margin-top:16px;color:var(--muted);
+       font-size:.85rem;text-decoration:none;}
+a.back:hover{color:var(--text);}
+</style></head><body>
+
+<h1>📡 Wi-Fi Setup</h1>
+<p class="subtitle">You are connected to the <strong>crypto-epaper</strong> hotspot.<br>
+Configure your Wi-Fi network below.</p>
+
+<div class="ap-banner">
+  📶 <strong>Access Point mode active</strong><br>
+  Connect your device to <strong>crypto-epaper</strong> (password: <strong>bitcoin123</strong>),
+  then enter your home Wi-Fi credentials below. The device will reboot and connect automatically.
+</div>
+
+<div class="card">
+  <h2>🔍 Available Networks</h2>
+  <button type="button" class="btn btn-scan" onclick="scanNetworks()">🔄 Scan for networks</button>
+  <div class="network-list" id="network_list">
+    <div style="color:var(--muted);font-size:.85rem">Click scan to search for networks…</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🔑 Connect to Wi-Fi</h2>
+  <label>Network name (SSID)</label>
+  <input type="text" id="ssid_input" placeholder="e.g. MyHomeWifi" value="{{ ssid or '' }}">
+  <label>Password</label>
+  <input type="password" id="pass_input" placeholder="Wi-Fi password">
+  <button type="button" class="btn btn-primary" onclick="connectWifi()">🔗 Connect & Save</button>
+  <div id="connect_status"></div>
+</div>
+
+{% if msg %}
+<div class="status {{ 'ok' if ok else 'err' }}">{{ msg }}</div>
+{% endif %}
+
+<a class="back" href="/">← Back to dashboard</a>
+
+<script>
+async function scanNetworks(){
+  const list = document.getElementById('network_list');
+  list.innerHTML = '<div style="color:var(--muted);font-size:.85rem"><span class="spinner"></span>Scanning…</div>';
+  try{
+    const r = await fetch('/wifi/scan');
+    const d = await r.json();
+    if(!d.networks || d.networks.length === 0){
+      list.innerHTML = '<div style="color:var(--muted);font-size:.85rem">No networks found. Try again.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for(const n of d.networks){
+      const bars = signalBars(n.signal);
+      const lock = n.secured ? '🔒' : '🔓';
+      const div = document.createElement('div');
+      div.className = 'network-item';
+      div.innerHTML = `
+        <div>
+          <div class="network-ssid">${n.ssid}</div>
+          <div class="network-meta">${lock} ${n.secured ? 'Secured' : 'Open'}</div>
+        </div>
+        <div style="text-align:right">
+          ${bars}
+          <div class="network-meta">${n.signal}%</div>
+        </div>`;
+      div.onclick = () => {
+        document.querySelectorAll('.network-item').forEach(el=>el.classList.remove('selected'));
+        div.classList.add('selected');
+        document.getElementById('ssid_input').value = n.ssid;
+        document.getElementById('pass_input').focus();
+      };
+      list.appendChild(div);
+    }
+  }catch(e){
+    list.innerHTML = '<div style="color:var(--red);font-size:.85rem">Scan failed. Try again.</div>';
+  }
+}
+
+function signalBars(pct){
+  const heights=[6,10,14,18];
+  const active = pct >= 75 ? 4 : pct >= 50 ? 3 : pct >= 25 ? 2 : 1;
+  return heights.map((h,i)=>`<span class="signal-bar" style="height:${h}px;background:${i<active?'#34d399':'#374151'};width:5px;display:inline-block;vertical-align:bottom;margin-right:2px"></span>`).join('');
+}
+
+async function connectWifi(){
+  const ssid = document.getElementById('ssid_input').value.trim();
+  const pass = document.getElementById('pass_input').value;
+  const status = document.getElementById('connect_status');
+  if(!ssid){ status.className='status err'; status.textContent='Please enter a network name.'; return; }
+  status.className='status loading';
+  status.innerHTML='<span class="spinner"></span>Connecting… this may take up to 30 seconds.';
+  try{
+    const r = await fetch('/wifi/connect', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ssid, password: pass})
+    });
+    const d = await r.json();
+    if(d.ok){
+      status.className='status ok';
+      status.innerHTML='✅ Connected! The device will now switch to your Wi-Fi network.<br>Reconnect your device to your home network and access <strong>http://crypto-epaper.local:8080</strong>';
+    } else {
+      status.className='status err';
+      status.textContent='❌ Connection failed. Check the password and try again.';
+    }
+  }catch(e){
+    // If fetch fails, it may mean the device already switched networks
+    status.className='status ok';
+    status.innerHTML='✅ The device appears to have connected! Reconnect to your home Wi-Fi and access <strong>http://crypto-epaper.local:8080</strong>';
+  }
+}
+</script></body></html>
+"""
+
+MAIN_HTML = """
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crypto E-Paper</title>
@@ -73,6 +306,10 @@ h1{font-size:1.5rem;margin-bottom:4px;}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
       padding:24px;width:100%;max-width:480px;margin-bottom:16px;}
 .card h2{font-size:1rem;color:var(--accent);margin-bottom:16px;}
+.ap-banner{background:#78350f;border:1px solid #d97706;border-radius:10px;
+           padding:14px 16px;margin-bottom:20px;width:100%;max-width:480px;
+           font-size:.85rem;line-height:1.6;}
+.ap-banner a{color:#fbbf24;font-weight:600;}
 label{display:block;color:var(--muted);font-size:.8rem;margin-bottom:4px;
       margin-top:14px;text-transform:uppercase;letter-spacing:.05em;}
 select,input[type=number],input[type=text]{width:100%;background:var(--bg);
@@ -122,7 +359,6 @@ input:checked+.slider:before{transform:translateX(18px);}
 .morse-type{font-size:.72rem;color:var(--muted);margin-top:4px;}
 .sound-row{display:flex;gap:8px;align-items:flex-end;margin-top:8px;}
 .sound-row .sound-input{flex:1;}
-.sound-label{font-size:.75rem;color:var(--muted);margin-bottom:4px;}
 .input-action-row{display:flex;gap:8px;margin-top:8px;}
 .input-action-row input{flex:1;}
 .hint{font-size:.75rem;color:var(--muted);margin-top:6px;line-height:1.5;}
@@ -131,12 +367,20 @@ footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
 </style></head><body>
 <h1>🖥️ Crypto E-Paper</h1>
 <p class="subtitle">Configuration panel — Raspberry Pi</p>
+
+{% if ap_mode %}
+<div class="ap-banner">
+  📡 <strong>Access Point mode active</strong> — not connected to the internet.<br>
+  <a href="/wifi">→ Click here to configure your Wi-Fi network</a>
+</div>
+{% endif %}
+
 {% if msg %}<div class="status {{ 'ok' if ok else 'err' }}">{{ msg }}</div>{% endif %}
 
 <!-- Current Price -->
 <div class="card"><h2>📊 Current Price</h2>
   <div class="price-box">
-    <div class="price-val" id="pv">Loading…</div>
+    <div class="price-val" id="pv">{% if ap_mode %}No internet{% else %}Loading…{% endif %}</div>
     <div class="price-change" id="pc"></div>
     <div style="color:var(--muted);font-size:.75rem;margin-top:6px" id="pt"></div>
   </div>
@@ -190,22 +434,15 @@ footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
       <span class="slider"></span>
     </label>
   </div>
-
   <label>GPIO Pin</label>
   <input type="number" name="buzzer_gpio" value="{{ cfg.buzzer_gpio }}" min="1" max="40">
-
   <label>Alert if price ABOVE (0 = disabled)</label>
   <input type="number" name="alerta_acima" value="{{ cfg.alerta_acima }}" min="0" step="100">
-
   <label>Alert if price BELOW (0 = disabled)</label>
   <input type="number" name="alerta_abaixo" value="{{ cfg.alerta_abaixo }}" min="0" step="100">
-
   <hr class="divider">
-
-  <!-- Custom alert sounds -->
   <div style="color:var(--text);font-size:.9rem;font-weight:600;margin-bottom:4px">🔊 Alert Sounds</div>
   <div class="hint">Use letters for Morse code or numbers for beep sequences (e.g. SOS, 3, 1,2,3)</div>
-
   <label>📈 Sound when price goes ABOVE threshold</label>
   <div class="sound-row">
     <div class="sound-input">
@@ -214,12 +451,10 @@ footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
              placeholder="e.g. 3  or  SOS  or  1,2"
              oninput="updateSoundPreview('sound_high_input','sound_high_preview','sound_high_type')">
     </div>
-    <button type="button" class="btn btn-green btn-sm"
-            onclick="testSound('sound_high_input')">▶ Test</button>
+    <button type="button" class="btn btn-green btn-sm" onclick="testSound('sound_high_input')">▶ Test</button>
   </div>
   <div class="morse-preview" id="sound_high_preview">—</div>
   <div class="morse-type" id="sound_high_type"></div>
-
   <label>📉 Sound when price goes BELOW threshold</label>
   <div class="sound-row">
     <div class="sound-input">
@@ -228,21 +463,18 @@ footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
              placeholder="e.g. 5  or  SOS  or  3,1"
              oninput="updateSoundPreview('sound_low_input','sound_low_preview','sound_low_type')">
     </div>
-    <button type="button" class="btn btn-danger btn-sm"
-            onclick="testSound('sound_low_input')">▶ Test</button>
+    <button type="button" class="btn btn-danger btn-sm" onclick="testSound('sound_low_input')">▶ Test</button>
   </div>
   <div class="morse-preview" id="sound_low_preview">—</div>
   <div class="morse-type" id="sound_low_type"></div>
-
   {% if cfg.alerta_disparado %}
   <div style="color:var(--yellow);font-size:.85rem;margin-top:12px">⚠️ Alert already fired this cycle.</div>
   {% endif %}
-
   <button type="submit" class="btn btn-warn" style="margin-top:16px">🔔 Save Alerts</button>
   <a href="/resetar_alerta"><button type="button" class="btn btn-danger">↺ Reset fired alert</button></a>
 </div></form>
 
-<!-- Custom Buzzer Pattern -->
+<!-- Custom Buzzer -->
 <div class="card"><h2>🎵 Buzzer — Custom Pattern</h2>
   <label>Pattern</label>
   <div class="input-action-row">
@@ -252,26 +484,24 @@ footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
            oninput="updatePreview(this.value)">
     <button type="button" class="btn btn-green btn-sm" onclick="playNow()">▶ Play</button>
   </div>
-  <div class="hint">
-    💡 <strong>Letters</strong> → Morse code &nbsp;|&nbsp;
-    <strong>Numbers</strong> → N beeps &nbsp;|&nbsp;
-    <strong>1,3,2</strong> → 1 beep, pause, 3 beeps, pause, 2 beeps
-  </div>
+  <div class="hint">💡 <strong>Letters</strong> → Morse &nbsp;|&nbsp; <strong>Numbers</strong> → beeps &nbsp;|&nbsp; <strong>1,3,2</strong> → groups</div>
   <div class="morse-preview" id="morse_preview">Type something above to see the preview…</div>
   <div class="morse-type" id="morse_type"></div>
-
   <label style="margin-top:16px">Volume <span id="vol_label">{{ cfg.get('buzzer_volume', 80) }}%</span></label>
   <input type="range" id="vol_range" min="1" max="95" step="5"
          value="{{ cfg.get('buzzer_volume', 80) }}"
          oninput="document.getElementById('vol_label').textContent=this.value+'%'">
-  <div class="hint">⚠️ Max capped at 95% — at 100% PWM becomes DC and buzzer stops vibrating</div>
-
+  <div class="hint">⚠️ Max 95% — at 100% PWM becomes DC and buzzer stops vibrating</div>
   <label>Morse Speed (WPM) <span id="wpm_label">{{ cfg.get('buzzer_wpm', 15) }}</span></label>
   <input type="range" id="wpm_range" min="5" max="30" step="1"
          value="{{ cfg.get('buzzer_wpm', 15) }}"
          oninput="document.getElementById('wpm_label').textContent=this.value">
-
   <button type="button" class="btn btn-primary" style="margin-top:16px" onclick="saveBuzzer()">💾 Save Buzzer Settings</button>
+</div>
+
+<!-- Wi-Fi -->
+<div class="card"><h2>📡 Wi-Fi</h2>
+  <a href="/wifi"><button type="button" class="btn btn-primary">🔗 Configure Wi-Fi Network</button></a>
 </div>
 
 <!-- Service Control -->
@@ -294,53 +524,40 @@ const MORSE_TABLE = {
   '0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....','6':'-....','7':'--...','8':'---..','9':'----.',
   '.':'.-.-.-',',':'--..--','?':'..--..','!':'-.-.--'
 };
-
-function isNumericSeq(txt){ return /^[\d,\s]+$/.test(txt.trim()); }
-
+function isNumericSeq(t){return /^[\d,\s]+$/.test(t.trim());}
 function renderMorseHTML(text){
-  let html='';
+  let h='';
   for(const ch of text.toUpperCase()){
-    if(ch===' '){ html+='<span style="display:inline-block;width:24px"></span>'; continue; }
-    const code=MORSE_TABLE[ch];
-    if(!code){ html+=`<span style="color:var(--red)">${ch}?</span> `; continue; }
-    html+=`<span style="color:var(--muted);font-size:.68rem;margin-right:1px">${ch}</span>`;
-    for(const s of code){
-      if(s==='.') html+='<span class="dot"></span>';
-      else        html+='<span class="dash"></span>';
-    }
-    html+='<span class="gap"></span>';
+    if(ch===' '){h+='<span style="display:inline-block;width:24px"></span>';continue;}
+    const c=MORSE_TABLE[ch];
+    if(!c){h+=`<span style="color:var(--red)">${ch}?</span> `;continue;}
+    h+=`<span style="color:var(--muted);font-size:.68rem;margin-right:1px">${ch}</span>`;
+    for(const s of c){if(s==='.')h+='<span class="dot"></span>';else h+='<span class="dash"></span>';}
+    h+='<span class="gap"></span>';
   }
-  return html;
+  return h;
 }
-
 function renderSeqHTML(nums){
   return nums.map(n=>'🔔'.repeat(Math.min(n,15))+` <small style="color:var(--muted)">(${n}x)</small>`).join(' <span style="color:var(--muted)">→</span> ');
 }
-
 function buildPreview(val){
-  if(!val || !val.trim()) return {html:'—', desc:''};
+  if(!val||!val.trim())return{html:'—',desc:''};
   if(isNumericSeq(val)){
     const nums=val.trim().split(/[,\s]+/).filter(Boolean).map(Number).filter(n=>!isNaN(n)&&n>0);
-    if(nums.length) return {html:renderSeqHTML(nums), desc:`Beep sequence: ${nums.join(' → ')}`};
+    if(nums.length)return{html:renderSeqHTML(nums),desc:`Beep sequence: ${nums.join(' → ')}`};
   }
-  const morseText=[...val.toUpperCase()].map(c=>MORSE_TABLE[c]||'?').join(' ');
-  return {html:renderMorseHTML(val), desc:`Morse: ${morseText}`};
+  return{html:renderMorseHTML(val),desc:`Morse: ${[...val.toUpperCase()].map(c=>MORSE_TABLE[c]||'?').join(' ')}`};
 }
-
 function updatePreview(val){
   const p=buildPreview(val);
-  document.getElementById('morse_preview').innerHTML=p.html || 'Type something above to see the preview…';
+  document.getElementById('morse_preview').innerHTML=p.html||'Type something above to see the preview…';
   document.getElementById('morse_type').textContent=p.desc;
 }
-
-function updateSoundPreview(inputId, previewId, typeId){
-  const val=document.getElementById(inputId).value;
-  const p=buildPreview(val);
-  document.getElementById(previewId).innerHTML=p.html || '—';
-  document.getElementById(typeId).textContent=p.desc;
+function updateSoundPreview(iid,pid,tid){
+  const p=buildPreview(document.getElementById(iid).value);
+  document.getElementById(pid).innerHTML=p.html||'—';
+  document.getElementById(tid).textContent=p.desc;
 }
-
-// Initialize previews on load
 updatePreview(document.getElementById('buzzer_pattern_input').value);
 updateSoundPreview('sound_high_input','sound_high_preview','sound_high_type');
 updateSoundPreview('sound_low_input','sound_low_preview','sound_low_type');
@@ -349,72 +566,65 @@ async function testSound(inputId){
   const pattern=document.getElementById(inputId).value.trim();
   const volume=document.getElementById('vol_range').value;
   const wpm=document.getElementById('wpm_range').value;
-  if(!pattern){ alert('Enter a pattern first!'); return; }
-  const btn=event.currentTarget;
-  btn.textContent='⏳'; btn.disabled=true;
+  if(!pattern){alert('Enter a pattern first!');return;}
+  const btn=event.currentTarget; btn.textContent='⏳'; btn.disabled=true;
   try{
     const r=await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({pattern,volume:parseInt(volume),wpm:parseInt(wpm)})});
-    const d=await r.json();
-    btn.textContent=d.ok?'✅':'❌';
-  }catch(e){ btn.textContent='❌'; }
-  setTimeout(()=>{ btn.textContent='▶ Test'; btn.disabled=false; },2000);
+    const d=await r.json(); btn.textContent=d.ok?'✅':'❌';
+  }catch(e){btn.textContent='❌';}
+  setTimeout(()=>{btn.textContent='▶ Test';btn.disabled=false;},2000);
 }
-
 async function playNow(){
   const pattern=document.getElementById('buzzer_pattern_input').value.trim();
   const volume=document.getElementById('vol_range').value;
   const wpm=document.getElementById('wpm_range').value;
-  if(!pattern){ alert('Enter a pattern first!'); return; }
-  const btn=event.currentTarget;
-  btn.textContent='⏳'; btn.disabled=true;
+  if(!pattern){alert('Enter a pattern first!');return;}
+  const btn=event.currentTarget; btn.textContent='⏳'; btn.disabled=true;
   try{
     const r=await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({pattern,volume:parseInt(volume),wpm:parseInt(wpm)})});
-    const d=await r.json();
-    btn.textContent=d.ok?'✅':'❌';
-  }catch(e){ btn.textContent='❌'; }
-  setTimeout(()=>{ btn.textContent='▶ Play'; btn.disabled=false; },2000);
+    const d=await r.json(); btn.textContent=d.ok?'✅':'❌';
+  }catch(e){btn.textContent='❌';}
+  setTimeout(()=>{btn.textContent='▶ Play';btn.disabled=false;},2000);
 }
-
 async function saveBuzzer(){
-  const pattern=document.getElementById('buzzer_pattern_input').value.trim();
-  const volume=document.getElementById('vol_range').value;
-  const wpm=document.getElementById('wpm_range').value;
   const r=await fetch('/buzzer/save',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({pattern,volume:parseInt(volume),wpm:parseInt(wpm)})});
+    body:JSON.stringify({
+      pattern:document.getElementById('buzzer_pattern_input').value.trim(),
+      volume:parseInt(document.getElementById('vol_range').value),
+      wpm:parseInt(document.getElementById('wpm_range').value)
+    })});
   const d=await r.json();
   showMsg(d.ok?'✅ Buzzer settings saved!':'❌ Save failed');
 }
-
 function showMsg(text){
   let el=document.querySelector('.flash-msg');
-  if(!el){ el=document.createElement('div'); el.className='status ok flash-msg'; document.querySelector('h1').after(el); }
-  el.textContent=text;
-  setTimeout(()=>el.remove(),3000);
+  if(!el){el=document.createElement('div');el.className='status ok flash-msg';document.querySelector('h1').after(el);}
+  el.textContent=text; setTimeout(()=>el.remove(),3000);
 }
-
 function selectTheme(mode){
   document.getElementById('theme_input').value=mode==='inverted'?'true':'false';
   document.querySelectorAll('.preview-box').forEach(e=>e.classList.remove('selected'));
   event.currentTarget.classList.add('selected');
 }
-
+{% if not ap_mode %}
 async function refreshPrice(){
   try{
-    const r=await fetch('/api/price'); const d=await r.json();
-    if(d.error){ document.getElementById('pv').textContent='API error'; return; }
+    const r=await fetch('/api/price');const d=await r.json();
+    if(d.error){document.getElementById('pv').textContent='API error';return;}
     const p=d.price;
     document.getElementById('pv').textContent=d.fiat_symbol+(p>=1000?
       p.toLocaleString('en-US',{maximumFractionDigits:0}):
       p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}));
-    const chg=d.change_24h; const el=document.getElementById('pc');
+    const chg=d.change_24h;const el=document.getElementById('pc');
     el.textContent=(chg>=0?'▲':'▼')+' '+Math.abs(chg).toFixed(2)+'%';
     el.className='price-change '+(chg>=0?'up':'dn');
     document.getElementById('pt').textContent='Updated: '+new Date().toLocaleTimeString();
-  }catch(e){ document.getElementById('pv').textContent='No connection'; }
+  }catch(e){document.getElementById('pv').textContent='No connection';}
 }
-refreshPrice(); setInterval(refreshPrice,60000);
+refreshPrice();setInterval(refreshPrice,60000);
+{% endif %}
 </script></body></html>
 """
 
@@ -428,9 +638,43 @@ def index():
     cfg.setdefault("buzzer_pattern",   "")
     cfg.setdefault("sound_high",       "3")
     cfg.setdefault("sound_low",        "5")
-    return render_template_string(HTML, cfg=cfg, cryptos=CRYPTOS, fiats=FIATS, intervals=INTERVALS,
+    return render_template_string(MAIN_HTML, cfg=cfg, cryptos=CRYPTOS, fiats=FIATS,
+        intervals=INTERVALS, ap_mode=ap_is_active(),
         msg=request.args.get("msg", ""), ok=request.args.get("ok", "1") == "1",
         now=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+
+@app.route("/wifi")
+def wifi_page():
+    return render_template_string(WIFI_PAGE,
+        msg=request.args.get("msg", ""),
+        ok=request.args.get("ok", "1") == "1",
+        ssid=request.args.get("ssid", ""))
+
+
+@app.route("/wifi/scan")
+def wifi_scan():
+    networks = scan_wifi_networks()
+    return jsonify({"networks": networks})
+
+
+@app.route("/wifi/connect", methods=["POST"])
+def wifi_connect():
+    data     = request.get_json()
+    ssid     = data.get("ssid", "").strip()
+    password = data.get("password", "")
+
+    if not ssid:
+        return jsonify({"ok": False, "error": "SSID required"})
+
+    def _connect():
+        time.sleep(1)
+        success = connect_wifi(ssid, password)
+        if success:
+            log.info(f"Connected to '{ssid}' — AP will shut down on next watchdog cycle")
+
+    threading.Thread(target=_connect, daemon=True).start()
+    return jsonify({"ok": True})
 
 
 @app.route("/save", methods=["POST"])
@@ -483,10 +727,8 @@ def buzzer_play():
     volume  = int(data.get("volume", cfg.get("buzzer_volume", 80)))
     wpm     = int(data.get("wpm",    cfg.get("buzzer_wpm",    15)))
     gpio    = cfg.get("buzzer_gpio", 18)
-
     if not pattern:
         return jsonify({"ok": False, "error": "Empty pattern"})
-
     def _play():
         try:
             import sys
@@ -495,7 +737,6 @@ def buzzer_play():
             tocar_buzzer_custom(gpio=gpio, texto=pattern, volume=volume, wpm=wpm)
         except Exception as e:
             log.error(f"Buzzer play error: {e}")
-
     threading.Thread(target=_play, daemon=True).start()
     return jsonify({"ok": True})
 
@@ -512,37 +753,34 @@ def resetar_alerta():
 def api_price():
     import requests as req
     cfg = load_config()
-    sym = {"usd": "$", "brl": "R$", "eur": "€", "gbp": "£", "jpy": "¥"}.get(cfg["fiat"], cfg["fiat"].upper())
+    sym = {"usd":"$","brl":"R$","eur":"€","gbp":"£","jpy":"¥"}.get(cfg["fiat"], cfg["fiat"].upper())
     try:
         r = req.get("https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": cfg["crypto"], "vs_currencies": cfg["fiat"], "include_24hr_change": "true"},
+            params={"ids":cfg["crypto"],"vs_currencies":cfg["fiat"],"include_24hr_change":"true"},
             timeout=8)
         d = r.json().get(cfg["crypto"], {})
-        return jsonify({
-            "price":      d.get(cfg["fiat"], 0),
-            "change_24h": d.get(f"{cfg['fiat']}_24h_change", 0),
-            "fiat_symbol": sym,
-            "crypto":     cfg["crypto"],
-        })
+        return jsonify({"price":d.get(cfg["fiat"],0),
+            "change_24h":d.get(f"{cfg['fiat']}_24h_change",0),
+            "fiat_symbol":sym,"crypto":cfg["crypto"]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error":str(e)}),500
 
 
 @app.route("/service/<action>", methods=["POST"])
 def service(action):
     cmds = {
-        "restart": ["sudo", "systemctl", "restart", "crypto-epaper"],
-        "stop":    ["sudo", "systemctl", "stop",    "crypto-epaper"],
-        "start":   ["sudo", "systemctl", "start",   "crypto-epaper"],
+        "restart":["sudo","systemctl","restart","crypto-epaper"],
+        "stop":   ["sudo","systemctl","stop",   "crypto-epaper"],
+        "start":  ["sudo","systemctl","start",  "crypto-epaper"],
     }
     if action not in cmds:
         return redirect(url_for("index", msg="Invalid action.", ok=0))
     try:
         subprocess.run(cmds[action], timeout=10, check=True)
-        labels = {"restart": "restarted", "stop": "stopped", "start": "started"}
-        return redirect(url_for("index", msg=f"✅ Service {labels[action]}.", ok=1))
+        labels={"restart":"restarted","stop":"stopped","start":"started"}
+        return redirect(url_for("index",msg=f"✅ Service {labels[action]}.",ok=1))
     except Exception as e:
-        return redirect(url_for("index", msg=f"Error: {e}", ok=0))
+        return redirect(url_for("index",msg=f"Error: {e}",ok=0))
 
 
 if __name__ == "__main__":
