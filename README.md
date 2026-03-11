@@ -52,11 +52,13 @@
 - 🎨 **Display themes** — switch between normal (black bg) and inverted (white bg)
 - 📡 **Offline mode** — shows last known price with offline indicator when disconnected
 - 🔄 **Wi-Fi watchdog** — auto-reconnects every 2 minutes if connection drops
+- 📶 **Auto Access Point** — if Wi-Fi fails, starts a hotspot so you can reconfigure the network from any browser
+- 🌐 **Wi-Fi setup page** — scan networks, pick one and enter the password directly from the web dashboard
 - 🔔 **Price alerts** — buzzer sounds when price crosses a high or low threshold
+- 🔊 **Custom alert sounds** — separate configurable sound for price-up and price-down alerts
 - 🎵 **Morse code & beep sequences** — type any text or numbers to play on the buzzer
-- 🔊 **Volume & speed control** — PWM volume (passive buzzer) and Morse WPM slider
+- 🔊 **Volume & speed control** — PWM volume and Morse WPM slider
 - 👁️ **Live preview** — visual dot/dash preview before playing Morse in the browser
-- 🌐 **Web dashboard** — configure everything from any browser on the same network
 - 🔁 **Auto-start on boot** — systemd services keep everything running 24/7
 - 💾 **Low power** — optimized for continuous operation on Pi Zero W
 
@@ -110,6 +112,21 @@ Buzzer (-) short leg ──── GND     (Pin 14)
 
 ---
 
+### Power Supply Notes
+
+The Pi Zero W is sensitive to voltage drops, especially during boot. For stable operation:
+
+- Use a **regulated 5V / 1A** power supply (phone charger works well)
+- If powering via the GPIO pads (PP1/PP6), use **thick wire (24 AWG or lower gauge number)**
+- A **1000µF electrolytic capacitor** in parallel with the power rails helps absorb voltage dips:
+  ```
+  Capacitor (+) ──── 5V (PP1 or Pin 2)
+  Capacitor (-) ──── GND (PP6 or Pin 6)
+  ```
+- 2 slow blinks on the green LED = under-voltage warning — check your power supply
+
+---
+
 ## 💿 OS Setup
 
 ### 1. Flash the OS
@@ -152,20 +169,18 @@ The setup script handles everything: system packages, Waveshare driver, fonts, P
 
 ### Set up Wi-Fi watchdog (recommended)
 
-After installation, set up the auto-reconnect watchdog:
-
 ```bash
-cat > /usr/local/bin/wifi-watchdog.sh << 'WEOF'
-#!/bin/bash
-LOG=/home/pi/crypto-epaper/files/logs/wifi.log
-if ! ping -c 2 -W 3 8.8.8.8 > /dev/null 2>&1; then
-    echo "$(date) offline, reconnecting..." >> $LOG
-    ip link set wlan0 down && sleep 3 && ip link set wlan0 up && sleep 15
-    dhclient wlan0 2>> $LOG
-fi
-WEOF
+sudo cp wifi-watchdog.sh /usr/local/bin/wifi-watchdog.sh
 sudo chmod +x /usr/local/bin/wifi-watchdog.sh
 (sudo crontab -l 2>/dev/null; echo '*/2 * * * * /usr/local/bin/wifi-watchdog.sh') | sudo crontab -
+```
+
+
+### Verify services
+
+```bash
+sudo systemctl status crypto-epaper
+sudo systemctl status crypto-epaper-web
 ```
 
 ### Add multiple Wi-Fi networks (optional)
@@ -203,6 +218,10 @@ sudo systemctl status crypto-epaper-web
 ```
 http://crypto-epaper.local:8080
 ```
+### Web Dashboard Features
+
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/904c80ae-057a-4a6f-a1ed-6ea266a31eeb" />
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/58fcc4a8-a446-41a5-b4e6-506e88d95085" />
 
 ---
 
@@ -232,18 +251,39 @@ Shows 24h percentage change with color indicator.
 
 ---
 
-### 📡 Offline Behavior
+### 📡 Wi-Fi & Offline Behavior
 
-When the internet connection drops:
+**Automatic Access Point**
 
-- The display immediately switches to the **offline screen**
-- Shows `** OFFLINE **` banner at the top
-- Displays the **last known price** so you always have a reference
-- Shows the time of the last successful update
-- The Wi-Fi watchdog attempts reconnection every 2 minutes
-- Once back online, the display returns to normal automatically on the next cycle
+If the Pi loses Wi-Fi and cannot reconnect, it automatically starts an Access Point:
 
-No configuration needed — this works automatically.
+| Setting | Value |
+|---|---|
+| **AP SSID** | `crypto-epaper` |
+| **AP Password** | `bitcoin123` |
+| **Dashboard IP** | `http://192.168.4.1:8080` |
+| **Dashboard URL** | `http://cripto.local:8080` |
+
+
+When in AP mode, the dashboard shows an **orange warning banner** with a link to the Wi-Fi setup page.
+
+**Wi-Fi Setup Page (`/wifi`)**
+
+Available from any device connected to the AP or from the main dashboard via the **📡 Wi-Fi** button:
+
+1. Click **🔄 Scan for networks** — shows all nearby networks with signal strength and security indicators
+2. Click a network to auto-fill the SSID field
+3. Enter the password and click **🔗 Connect & Save**
+4. The device connects and the AP shuts down automatically on the next watchdog cycle
+5. Reconnect your device to your home Wi-Fi and access `http://crypto-epaper.local:8080`
+
+**Offline display behavior**
+
+When disconnected from the internet, the e-paper display shows:
+- `** OFFLINE **` banner at the top
+- Last known price for reference
+- Current time
+- Returns to normal automatically when internet is restored
 
 ---
 
@@ -251,22 +291,22 @@ No configuration needed — this works automatically.
 
 | Field | Description |
 |---|---|
-| **Buzzer active** | Master on/off toggle |
-| **Use PWM** | Enable for passive buzzers (volume control) |
+| **Buzzer enabled** | Master on/off toggle |
 | **GPIO pin** | GPIO pin number (default: 18) |
-| **Alert if price ABOVE** | Fires **3 beeps** when price rises above this value |
-| **Alert if price BELOW** | Fires **5 beeps** when price falls below this value |
+| **Alert if price ABOVE** | Fires custom sound when price rises above this value |
+| **Alert if price BELOW** | Fires custom sound when price falls below this value |
+| **📈 Sound when ABOVE** | Pattern to play on high alert (e.g. `3`, `SOS`, `1,2`) |
+| **📉 Sound when BELOW** | Pattern to play on low alert (e.g. `5`, `SOS`, `3,1`) |
 | **Reset fired alert** | Re-arms the alert after it fires |
 
 Both thresholds work simultaneously. Set to `0` to disable either one.
+When alerts are active, a `!` appears next to the coin name on the display.
 
 **Example — monitor a range:**
 ```
-Alert above: 90000  →  notified if BTC breaks $90k upward
-Alert below: 60000  →  notified if BTC drops under $60k
+Alert above: 90000  →  custom sound if BTC breaks $90k upward
+Alert below: 60000  →  custom sound if BTC drops under $60k
 ```
-
-When alerts are active, a `!` appears next to the coin name on the display.
 
 ---
 
@@ -325,6 +365,7 @@ crypto-epaper/
 
 ---
 
+
 ## ⚙️ config.json Reference
 
 ```json
@@ -335,11 +376,12 @@ crypto-epaper/
   "cores_invertidas": false,
   "buzzer_ativo":     false,
   "buzzer_gpio":      18,
-  "buzzer_use_pwm":   false,
-  "buzzer_volume":    100,
+  "buzzer_volume":    80,
   "buzzer_wpm":       15,
   "buzzer_pattern":   "",
-  "alerta_acima":     75000,
+  "sound_high":       "3",
+  "sound_low":        "5",
+  "alerta_acima":     0,
   "alerta_abaixo":    0,
   "alerta_disparado": false
 }
@@ -375,10 +417,7 @@ crontab -e
 
 ---
 git
-### Painel WEB Features
 
-<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/904c80ae-057a-4a6f-a1ed-6ea266a31eeb" />
-<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/58fcc4a8-a446-41a5-b4e6-506e88d95085" />
 
 ## 🛠️ Useful Commands
 
@@ -420,22 +459,6 @@ lgpio>=0.2
 ```
 
 ---
-
-## 🗺️ Roadmap
-
-- [ ] 24h sparkline chart on the display
-- [ ] Multiple crypto rotation mode
-- [ ] Telegram / push notification alerts
-- [ ] Support for Waveshare 4.2" color display
-- [ ] Home Assistant integration via MQTT
-- [ ] Docker simulator for testing without hardware
-
----
-
-## 📄 License
-
-MIT — use it, modify it, share it freely.
-THX Claude
 
 ---
 
