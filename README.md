@@ -37,6 +37,11 @@
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/1e5453f0-100e-4eb3-a2c0-c45c07376af0" />
 
+**Wallet monitor:**
+
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/a69cae56-f937-448d-9a39-d6995ef0c0bd" />
+
+
 > The `!` indicator appears when price alerts are active.
 > When offline, the display shows the last known price until internet is restored.
 
