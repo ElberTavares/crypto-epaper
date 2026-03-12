@@ -33,11 +33,9 @@
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/d83b8c6e-ff93-4a57-8bf5-1c76b655ec40" />
 
-
 **Offline — no internet connection:**
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/1e5453f0-100e-4eb3-a2c0-c45c07376af0" />
-
 
 > The `!` indicator appears when price alerts are active.
 > When offline, the display shows the last known price until internet is restored.
@@ -47,17 +45,17 @@
 ## ✨ Features
 
 - 📈 **Live prices** — fetches Bitcoin, Ethereum, Solana and more from CoinGecko
+- 💼 **Wallet monitor** — track a BTC, ETH or SOL wallet balance and its fiat value in real time
 - 🌍 **Multi-currency** — USD, BRL, EUR, GBP, JPY
 - ⏱️ **Configurable interval** — update every 1 minute up to 1 hour
 - 🎨 **Display themes** — switch between normal (black bg) and inverted (white bg)
 - 📡 **Offline mode** — shows last known price with offline indicator when disconnected
-- 🔄 **Wi-Fi watchdog** — auto-reconnects every 2 minutes if connection drops
-- 📶 **Auto Access Point** — if Wi-Fi fails, starts a hotspot so you can reconfigure the network from any browser
-- 🌐 **Wi-Fi setup page** — scan networks, pick one and enter the password directly from the web dashboard
+- 📶 **No Wi-Fi screen** — displays hotspot instructions so you can connect and configure the device
+- 🔄 **Wi-Fi watchdog** — auto-reconnects every 2 minutes; falls back to a phone hotspot if saved network is unavailable
+- 🌐 **Wi-Fi setup page** — scan networks and connect to a new Wi-Fi directly from the dashboard
 - 🔔 **Price alerts** — buzzer sounds when price crosses a high or low threshold
 - 🔊 **Custom alert sounds** — separate configurable sound for price-up and price-down alerts
 - 🎵 **Morse code & beep sequences** — type any text or numbers to play on the buzzer
-- 🔊 **Volume & speed control** — PWM volume and Morse WPM slider
 - 👁️ **Live preview** — visual dot/dash preview before playing Morse in the browser
 - 🔁 **Auto-start on boot** — systemd services keep everything running 24/7
 - 💾 **Low power** — optimized for continuous operation on Pi Zero W
@@ -71,7 +69,7 @@
 | **Raspberry Pi Zero W** | Must have Wi-Fi. Pi Zero 2 W also works. |
 | **Waveshare e-Paper HAT 2.12"** | Version V2 or V3 (250×122 px, SPI) |
 | **MicroSD card** | Minimum 8 GB, Class 10 or better |
-| **Power supply** | 5V / 1A via Micro USB |
+| **Power supply** | 5V / 1A via Micro USB — stable regulated supply recommended |
 | **Buzzer** *(optional)* | Active buzzer 3.3V — or passive buzzer for volume control |
 
 ### Where to buy
@@ -82,26 +80,26 @@
 
 ### Active vs Passive Buzzer
 
-| Type | Volume Control | Tone Control | Notes |
-|---|---|---|---|
-| **Active** | ❌ Fixed | ❌ Fixed | Simplest — just needs on/off signal |
-| **Passive** | ✅ Via PWM | ✅ Via frequency | Enable PWM mode in dashboard settings |
+| Type | Volume Control | Notes |
+|---|---|---|
+| **Active** | ❌ Fixed | Simplest — just needs on/off signal |
+| **Passive** | ✅ Via PWM | Enable PWM mode in dashboard settings |
 
 ### Display Wiring
 
 The HAT plugs directly onto the 40-pin GPIO header — **no wiring needed**.
 If connecting with jumper wires:
 
-| HAT Pin | GPIO Pin | Function  |
-|---------|----------|-----------|
-| VCC     | Pin 17   | 3.3V      |
-| GND     | Pin 20   | GND       |
-| DIN     | Pin 19   | SPI MOSI  |
-| CLK     | Pin 23   | SPI CLK   |
-| CS      | Pin 24   | SPI CE0   |
-| DC      | Pin 22   | GPIO 25   |
-| RST     | Pin 11   | GPIO 17   |
-| BUSY    | Pin 18   | GPIO 24   |
+| HAT Pin | GPIO Pin | Function |
+|---------|----------|----------|
+| VCC     | Pin 17   | 3.3V     |
+| GND     | Pin 20   | GND      |
+| DIN     | Pin 19   | SPI MOSI |
+| CLK     | Pin 23   | SPI CLK  |
+| CS      | Pin 24   | SPI CE0  |
+| DC      | Pin 22   | GPIO 25  |
+| RST     | Pin 11   | GPIO 17  |
+| BUSY    | Pin 18   | GPIO 24  |
 
 ### Buzzer Wiring
 
@@ -109,8 +107,6 @@ If connecting with jumper wires:
 Buzzer (+) long leg  ──── GPIO 18 (Pin 12)
 Buzzer (-) short leg ──── GND     (Pin 14)
 ```
-
----
 
 ### Power Supply Notes
 
@@ -175,35 +171,6 @@ sudo chmod +x /usr/local/bin/wifi-watchdog.sh
 (sudo crontab -l 2>/dev/null; echo '*/2 * * * * /usr/local/bin/wifi-watchdog.sh') | sudo crontab -
 ```
 
-
-### Verify services
-
-```bash
-sudo systemctl status crypto-epaper
-sudo systemctl status crypto-epaper-web
-```
-
-### Add multiple Wi-Fi networks (optional)
-
-The Pi will try networks in priority order — useful when moving between locations:
-
-```bash
-sudo nano /etc/wpa_supplicant/wpa_supplicant.conf
-```
-
-```
-network={
-    ssid="HomeWifi"
-    psk="password1"
-    priority=10
-}
-network={
-    ssid="PhoneHotspot"
-    psk="password2"
-    priority=5
-}
-```
-
 ### Verify services
 
 ```bash
@@ -218,12 +185,12 @@ sudo systemctl status crypto-epaper-web
 ```
 http://crypto-epaper.local:8080
 ```
+
 ### Web Dashboard Features
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/904c80ae-057a-4a6f-a1ed-6ea266a31eeb" />
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/58fcc4a8-a446-41a5-b4e6-506e88d95085" />
 <img width="500" height="154" alt="image" src="https://github.com/user-attachments/assets/97c7d500-1782-4de8-b061-1681a8f9370a" />
-
 
 ---
 
@@ -231,6 +198,7 @@ http://crypto-epaper.local:8080
 
 Live price from CoinGecko, auto-refreshing every 60 seconds.
 Shows 24h percentage change with color indicator.
+In hotspot/offline mode this section shows "No internet" until Wi-Fi is configured.
 
 ---
 
@@ -253,35 +221,77 @@ Shows 24h percentage change with color indicator.
 
 ---
 
+### 💼 Display Mode & Wallet Monitor
+
+The display can show either the **live market price** or a **specific wallet balance**.
+
+Toggle **"Show wallet instead of price"** in the dashboard to switch modes.
+
+**Wallet mode settings:**
+
+| Field | Description |
+|---|---|
+| **Network** | Bitcoin (BTC), Ethereum (ETH) or Solana (SOL) |
+| **Wallet Address** | Your public address — no private key needed, read-only |
+| **🔍 Preview Balance** | Fetches balance instantly to verify before saving |
+
+**What the display shows in wallet mode:**
+```
+┌──────────────────────────────────────────────┐
+│ BTC WALLET                          23:00   │
+│ bc1q...a3f2                                  │
+├──────────────────────────────────────────────┤
+│          0.0341 BTC                          │
+│            $2,193.40                         │
+└──────────────────────────────────────────────┘
+```
+
+- Network label and time in the header
+- Wallet address shown as first 6 + last 6 characters (`bc1q...a3f2`)
+- Balance in native units (BTC / ETH / SOL)
+- Fiat equivalent value below
+
+The display updates at the same interval as price mode. If no address is configured, it falls back to price mode automatically.
+
+---
+
 ### 📡 Wi-Fi & Offline Behavior
 
-**Automatic Access Point**
+**No Wi-Fi screen**
 
-If the Pi loses Wi-Fi and cannot reconnect, it automatically starts an Access Point:
+If the Pi boots with no Wi-Fi available, the display shows instructions:
+```
+** NO WI-FI **
+Create a phone hotspot:
+SSID: crypto-epaper
+Pass: bitcoin123
+Then access the dashboard
+http://cripto.local:8080
+```
 
-| Setting | Value |
+**Hotspot fallback**
+
+The Pi Zero W cannot act as a Wi-Fi access point and client simultaneously due to hardware limitations. Instead, the watchdog connects to a **phone hotspot** as fallback.
+
+How it works:
+
+1. Pi loses Wi-Fi → tries to reconnect to the saved network
+2. If reconnect fails → scans for the fallback hotspot and connects automatically
+3. Once connected to the hotspot, access the dashboard at `http://crypto-epaper.local:8080`
+4. From the dashboard, connect to a new permanent Wi-Fi network
+
+Default hotspot credentials (configurable in the dashboard under **📡 Wi-Fi**):
+
+| Setting | Default |
 |---|---|
-| **AP SSID** | `crypto-epaper` |
-| **AP Password** | `bitcoin123` |
-| **Dashboard IP** | `http://192.168.4.1:8080` |
-| **Dashboard URL** | `http://cripto.local:8080` |
+| **Hotspot SSID** | `crypto-epaper` |
+| **Hotspot Password** | `bitcoin123` |
 
-
-When in AP mode, the dashboard shows an **orange warning banner** with a link to the Wi-Fi setup page.
-
-**Wi-Fi Setup Page (`/wifi`)**
-
-Available from any device connected to the AP or from the main dashboard via the **📡 Wi-Fi** button:
-
-1. Click **🔄 Scan for networks** — shows all nearby networks with signal strength and security indicators
-2. Click a network to auto-fill the SSID field
-3. Enter the password and click **🔗 Connect & Save**
-4. The device connects and the AP shuts down automatically on the next watchdog cycle
-5. Reconnect your device to your home Wi-Fi and access `http://crypto-epaper.local:8080`
+Create a hotspot on your phone with these credentials and the Pi will connect automatically within 2 minutes.
 
 **Offline display behavior**
 
-When disconnected from the internet, the e-paper display shows:
+When connected to Wi-Fi but without internet access, the display shows:
 - `** OFFLINE **` banner at the top
 - Last known price for reference
 - Current time
@@ -320,16 +330,17 @@ Alert below: 60000  →  custom sound if BTC drops under $60k
 | `BITCOIN` | Full Morse for each letter |
 | `3` | 3 beeps |
 | `1,2,3` | 1 beep · pause · 2 beeps · pause · 3 beeps |
-| `1,1,1` | 3 separate single beeps |
 
-**Live preview** shows dots `●` and dashes `━` as you type — before any sound plays.
+**Live preview** shows dots `●` and dashes `━` as you type.
 
 | Control | Description |
 |---|---|
 | **▶ Play** | Plays immediately on hardware |
-| **Volume** (0–100%) | PWM intensity — passive buzzer only |
+| **Volume** (1–95%) | PWM duty cycle — capped at 95% to keep buzzer vibrating |
 | **WPM** (5–30) | Morse speed in words per minute |
 | **💾 Save** | Saves pattern and settings to config |
+
+> Volume is capped at 95% — at 100% the PWM signal becomes DC and the buzzer stops vibrating.
 
 ---
 
@@ -347,12 +358,13 @@ Alert below: 60000  →  custom sound if BTC drops under $60k
 
 ```
 crypto-epaper/
-├── display_controller.py     # Main loop: price fetch + display render + offline detection
-├── web_server.py             # Flask web dashboard — port 8080
+├── display_controller.py     # Main loop: price/wallet fetch + display render + offline/no-wifi detection
+├── web_server.py             # Flask web dashboard + Wi-Fi setup page — port 8080
 ├── buzzer_controller.py      # Morse code, beep sequences, PWM volume
 ├── config.json               # Runtime config (re-read every cycle)
 ├── setup.sh                  # Automated installer
 ├── sd_health.sh              # SD card maintenance (cron)
+├── wifi-watchdog.sh          # Wi-Fi watchdog + phone hotspot fallback
 ├── crypto-epaper.service     # systemd display service
 ├── crypto-epaper-web.service # systemd Flask service
 ├── .gitignore
@@ -366,7 +378,6 @@ crypto-epaper/
 ```
 
 ---
-
 
 ## ⚙️ config.json Reference
 
@@ -385,7 +396,12 @@ crypto-epaper/
   "sound_low":        "5",
   "alerta_acima":     0,
   "alerta_abaixo":    0,
-  "alerta_disparado": false
+  "alerta_disparado": false,
+  "display_mode":     "price",
+  "wallet_address":   "",
+  "wallet_network":   "bitcoin",
+  "ap_ssid":          "crypto-epaper",
+  "ap_pass":          "bitcoin123"
 }
 ```
 
@@ -418,8 +434,6 @@ crontab -e
 ```
 
 ---
-git
-
 
 ## 🛠️ Useful Commands
 
@@ -430,21 +444,6 @@ sudo systemctl restart crypto-epaper              # restart display
 sudo systemctl restart crypto-epaper-web          # restart web dashboard
 journalctl -u crypto-epaper -n 50 --no-pager      # systemd logs
 ```
-
----
-
-## 🔍 Troubleshooting
-
-| Problem | Solution |
-|---|---|
-| Display shows nothing | `ls /dev/spi*` — SPI must be enabled |
-| Price shows 0.00 | CoinGecko rate limit — recovers automatically in 1–2 min |
-| Offline screen won't go away | Check `tail -f logs/wifi.log` — watchdog may need a moment |
-| Pi won't connect to Wi-Fi | Confirm 2.4GHz network — Pi Zero W does **not** support 5GHz |
-| Service won't start | `journalctl -u crypto-epaper -n 30` |
-| Buzzer not sounding | Check GPIO pin and `buzzer_ativo: true` in config |
-| Volume not working | Enable "Use PWM" — only works with passive buzzers |
-| Ghost image on screen | Power-cycle the display or increase update interval |
 
 ---
 
@@ -461,6 +460,11 @@ lgpio>=0.2
 ```
 
 ---
+
+## 📄 License
+
+MIT — use it, modify it, share it freely.
+THX Claude
 
 ---
 
