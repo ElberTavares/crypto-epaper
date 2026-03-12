@@ -1,12 +1,25 @@
 #!/bin/bash
-# wifi-watchdog.sh - Auto-reconnect Wi-Fi or fall back to Access Point
-# When no Wi-Fi is found, starts AP "crypto-epaper" / password "bitcoin123"
-# User connects to the AP and accesses http://192.168.4.1:8080 to configure Wi-Fi
+# wifi-watchdog.sh - Wi-Fi watchdog with fallback to known hotspot
+#
+# If no internet is found:
+#   1. Tries to reconnect to the current saved network
+#   2. If that fails, connects to the fallback hotspot:
+#        SSID    : crypto-epaper
+#        Password: bitcoin123
+#      (User creates this hotspot on their phone)
+#
+# Once connected to the hotspot, the user can access:
+#        http://crypto-epaper.local:8080
+#   and optionally configure a new Wi-Fi network from there.
+#
 # Add to cron: */2 * * * * /usr/local/bin/wifi-watchdog.sh
 
 LOG=/home/cripto/crypto-epaper/files/logs/wifi.log
-AP_SSID="crypto-epaper"
-AP_PASS="bitcoin123"
+CONFIG=/home/cripto/crypto-epaper/files/config.json
+
+# Read fallback hotspot credentials from config.json if available
+AP_SSID=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('ap_ssid','crypto-epaper'))" 2>/dev/null || echo "crypto-epaper")
+AP_PASS=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('ap_pass','bitcoin123'))" 2>/dev/null || echo "bitcoin123")
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') -- $*" >> "$LOG"; }
 
@@ -14,59 +27,57 @@ is_connected() {
     ping -c 2 -W 3 8.8.8.8 > /dev/null 2>&1
 }
 
-ap_is_active() {
-    nmcli -t -f NAME,TYPE con show --active 2>/dev/null | grep -q "wifi-ap\|$AP_SSID"
+connected_to_hotspot() {
+    iwgetid -r 2>/dev/null | grep -qF "$AP_SSID"
 }
 
-start_ap() {
-    log "Starting Access Point '$AP_SSID'..."
-    # Remove any stale AP connection first
-    nmcli connection delete "$AP_SSID" 2>/dev/null || true
-    nmcli connection add type wifi ifname wlan0 con-name "$AP_SSID" autoconnect no \
-        ssid "$AP_SSID" \
-        -- wifi-sec.key-mgmt wpa-psk \
-           wifi-sec.psk "$AP_PASS" \
-           ipv4.method shared \
-           ipv4.addresses 192.168.4.1/24 \
-           802-11-wireless.mode ap \
-           802-11-wireless.band bg 2>/dev/null
-    nmcli connection up "$AP_SSID" >> "$LOG" 2>&1
-    log "Access Point started — connect to '$AP_SSID' and open http://192.168.4.1:8080"
-}
-
-stop_ap() {
-    log "Stopping Access Point..."
-    nmcli connection down "$AP_SSID" 2>/dev/null || true
-    nmcli connection delete "$AP_SSID" 2>/dev/null || true
-}
-
-reconnect_wifi() {
-    log "Attempting Wi-Fi reconnect..."
+reconnect_saved() {
+    log "Trying to reconnect saved Wi-Fi..."
     nmcli radio wifi off && sleep 2 && nmcli radio wifi on
     sleep 15
+}
+
+connect_hotspot() {
+    log "Connecting to fallback hotspot '$AP_SSID'..."
+
+    # Remove old connection entry if exists
+    nmcli connection delete "$AP_SSID" 2>/dev/null || true
+
+    # Connect to hotspot
+    nmcli device wifi connect "$AP_SSID" password "$AP_PASS" >> "$LOG" 2>&1
+    sleep 5
+
+    if connected_to_hotspot; then
+        log "Connected to hotspot '$AP_SSID'"
+        log "Access the dashboard at http://crypto-epaper.local:8080"
+    else
+        log "Failed to connect to hotspot '$AP_SSID' — make sure it is active"
+    fi
 }
 
 # ── Main logic ────────────────────────────────────────────────────────────────
 
 if is_connected; then
-    # Online — if AP was running, stop it
-    if ap_is_active; then
-        log "Wi-Fi restored — stopping Access Point"
-        stop_ap
+    # Online — nothing to do
+    if connected_to_hotspot; then
+        log "Connected via hotspot '$AP_SSID' — internet is available"
     fi
-else
-    # Offline
-    if ap_is_active; then
-        log "Still offline — Access Point already running, waiting for user config"
-    else
-        log "Offline — trying Wi-Fi reconnect first..."
-        reconnect_wifi
-        sleep 10
-        if is_connected; then
-            log "Reconnected to Wi-Fi successfully"
-        else
-            log "Reconnect failed — starting Access Point"
-            start_ap
-        fi
-    fi
+    exit 0
 fi
+
+# Offline
+if connected_to_hotspot; then
+    log "Connected to hotspot '$AP_SSID' but no internet — waiting for user to configure Wi-Fi"
+    exit 0
+fi
+
+# Not connected at all — try saved network first
+reconnect_saved
+
+if is_connected; then
+    log "Reconnected to saved Wi-Fi successfully"
+    exit 0
+fi
+
+# Saved network failed — fall back to hotspot
+connect_hotspot
