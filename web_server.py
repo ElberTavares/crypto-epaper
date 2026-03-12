@@ -2,7 +2,6 @@
 """
 web_server.py - Flask web dashboard
 Local configuration panel served on port 8080.
-Includes Wi-Fi configuration page for when running in Access Point mode.
 """
 
 import json, logging, subprocess, threading, time
@@ -51,22 +50,14 @@ def load_config():
             "sound_high": "3", "sound_low": "5",
             "alerta_acima": 0, "alerta_abaixo": 0,
             "alerta_disparado": False, "cores_invertidas": False,
+            "display_mode": "price", "wallet_address": "", "wallet_network": "bitcoin",
+            "ap_ssid": "crypto-epaper", "ap_pass": "bitcoin123",
         }
 
 
 def save_config(cfg):
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
-
-
-def is_online() -> bool:
-    try:
-        import socket
-        socket.setdefaulttimeout(3)
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-        return True
-    except Exception:
-        return False
 
 
 def ap_is_active() -> bool:
@@ -81,7 +72,6 @@ def ap_is_active() -> bool:
 
 
 def scan_wifi_networks() -> list:
-    """Scan for available Wi-Fi networks."""
     try:
         result = subprocess.run(
             ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
@@ -92,14 +82,14 @@ def scan_wifi_networks() -> list:
         for line in result.stdout.strip().splitlines():
             parts = line.split(":")
             if len(parts) >= 2:
-                ssid = parts[0].strip()
-                signal = parts[1].strip() if len(parts) > 1 else "?"
+                ssid     = parts[0].strip()
+                signal   = parts[1].strip() if len(parts) > 1 else "?"
                 security = parts[2].strip() if len(parts) > 2 else ""
                 if ssid and ssid not in seen and ssid != "crypto-epaper":
                     seen.add(ssid)
                     networks.append({
-                        "ssid": ssid,
-                        "signal": int(signal) if signal.isdigit() else 0,
+                        "ssid":    ssid,
+                        "signal":  int(signal) if signal.isdigit() else 0,
                         "secured": bool(security and security != "--"),
                     })
         networks.sort(key=lambda x: x["signal"], reverse=True)
@@ -110,9 +100,7 @@ def scan_wifi_networks() -> list:
 
 
 def connect_wifi(ssid: str, password: str) -> bool:
-    """Connect to a Wi-Fi network."""
     try:
-        # Remove existing connection for this SSID if any
         subprocess.run(["nmcli", "connection", "delete", ssid],
                        capture_output=True, timeout=5)
     except Exception:
@@ -130,504 +118,622 @@ def connect_wifi(ssid: str, password: str) -> bool:
         return False
 
 
-# ── HTML Templates ─────────────────────────────────────────────────────────────
-
-WIFI_PAGE = """
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wi-Fi Setup — Crypto E-Paper</title>
+# ── Wi-Fi Page ─────────────────────────────────────────────────────────────────
+WIFI_PAGE = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wi-Fi Setup</title>
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2d3147;--accent:#6c63ff;
-      --text:#e2e8f0;--muted:#8892a4;--green:#34d399;--red:#f87171;--yellow:#fbbf24;}
+      --text:#e2e8f0;--muted:#8892a4;--green:#34d399;--red:#f87171;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;
      min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px;}
 h1{font-size:1.4rem;margin-bottom:4px;}
-.subtitle{color:var(--muted);font-size:.85rem;margin-bottom:24px;text-align:center;}
+.sub{color:var(--muted);font-size:.85rem;margin-bottom:24px;}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
-      padding:24px;width:100%;max-width:420px;margin-bottom:16px;}
-.card h2{font-size:1rem;color:var(--accent);margin-bottom:16px;}
-.ap-banner{background:#1e3a5f;border:1px solid #2563eb;border-radius:10px;
-           padding:14px 16px;margin-bottom:20px;width:100%;max-width:420px;
-           font-size:.85rem;line-height:1.6;}
-.ap-banner strong{color:#60a5fa;}
-label{display:block;color:var(--muted);font-size:.8rem;margin-bottom:4px;
-      margin-top:14px;text-transform:uppercase;letter-spacing:.05em;}
-input[type=text],input[type=password]{width:100%;background:var(--bg);
-  border:1px solid var(--border);color:var(--text);padding:10px 12px;
-  border-radius:8px;font-size:.95rem;}
-.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;
-     font-size:1rem;font-weight:600;cursor:pointer;margin-top:12px;transition:opacity .2s;}
+      padding:20px;width:100%;max-width:420px;margin-bottom:14px;}
+.card h2{font-size:.95rem;color:var(--accent);margin-bottom:14px;}
+label{display:block;color:var(--muted);font-size:.78rem;text-transform:uppercase;
+      letter-spacing:.05em;margin-bottom:4px;margin-top:12px;}
+label:first-of-type{margin-top:0;}
+input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+      padding:10px 12px;border-radius:8px;font-size:.95rem;}
+.btn{display:block;width:100%;padding:11px;border:none;border-radius:8px;font-size:.95rem;
+     font-weight:600;cursor:pointer;margin-top:10px;transition:opacity .2s;}
 .btn:hover{opacity:.85;}
-.btn-primary{background:var(--accent);color:white;}
-.btn-scan{background:#1f2937;color:var(--text);margin-bottom:8px;}
-.network-list{margin-top:12px;}
-.network-item{display:flex;justify-content:space-between;align-items:center;
-              padding:10px 12px;border:1px solid var(--border);border-radius:8px;
-              margin-bottom:6px;cursor:pointer;transition:border-color .2s;}
-.network-item:hover,.network-item.selected{border-color:var(--accent);}
-.network-ssid{font-size:.9rem;font-weight:500;}
-.network-meta{font-size:.75rem;color:var(--muted);}
-.signal-bar{display:inline-block;width:8px;border-radius:2px;margin-right:1px;vertical-align:bottom;}
-.status{font-size:.85rem;text-align:center;padding:10px;border-radius:8px;margin-top:8px;}
-.status.ok{background:#064e3b;color:var(--green);}
-.status.err{background:#450a0a;color:var(--red);}
-.status.loading{background:#1f2937;color:var(--muted);}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);
-         border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;
-         margin-right:6px;vertical-align:middle;}
-@keyframes spin{to{transform:rotate(360deg)}}
-a.back{display:block;text-align:center;margin-top:16px;color:var(--muted);
-       font-size:.85rem;text-decoration:none;}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-scan{background:#1f2937;color:var(--text);}
+.net{display:flex;justify-content:space-between;align-items:center;
+     padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+     margin-bottom:6px;cursor:pointer;transition:border-color .2s;}
+.net:hover,.net.sel{border-color:var(--accent);}
+.net-name{font-size:.9rem;font-weight:500;}
+.net-meta{font-size:.75rem;color:var(--muted);}
+.st{font-size:.85rem;text-align:center;padding:10px;border-radius:8px;margin-top:8px;}
+.st.ok{background:#064e3b;color:var(--green);}
+.st.err{background:#450a0a;color:var(--red);}
+.st.loading{background:#1f2937;color:var(--muted);}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);
+      border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;margin-right:6px;vertical-align:middle;}
+@keyframes sp{to{transform:rotate(360deg)}}
+a.back{color:var(--muted);font-size:.85rem;text-decoration:none;margin-top:16px;display:block;text-align:center;}
 a.back:hover{color:var(--text);}
 </style></head><body>
-
 <h1>📡 Wi-Fi Setup</h1>
-<p class="subtitle">You are connected to the <strong>crypto-epaper</strong> hotspot.<br>
-Configure your Wi-Fi network below.</p>
-
-<div class="ap-banner">
-  📶 <strong>Access Point mode active</strong><br>
-  Connect your device to <strong>crypto-epaper</strong> (password: <strong>bitcoin123</strong>),
-  then enter your home Wi-Fi credentials below. The device will reboot and connect automatically.
+<p class="sub">Scan and connect to a new network.</p>
+<div class="card"><h2>🔍 Available Networks</h2>
+  <button type="button" class="btn btn-scan" onclick="scan()">🔄 Scan for networks</button>
+  <div id="list"><div style="color:var(--muted);font-size:.85rem;margin-top:8px">Click scan to search…</div></div>
 </div>
-
-<div class="card">
-  <h2>🔍 Available Networks</h2>
-  <button type="button" class="btn btn-scan" onclick="scanNetworks()">🔄 Scan for networks</button>
-  <div class="network-list" id="network_list">
-    <div style="color:var(--muted);font-size:.85rem">Click scan to search for networks…</div>
-  </div>
-</div>
-
-<div class="card">
-  <h2>🔑 Connect to Wi-Fi</h2>
-  <label>Network name (SSID)</label>
-  <input type="text" id="ssid_input" placeholder="e.g. MyHomeWifi" value="{{ ssid or '' }}">
+<div class="card"><h2>🔑 Connect</h2>
+  <label>Network (SSID)</label>
+  <input type="text" id="ssid" placeholder="Network name">
   <label>Password</label>
-  <input type="password" id="pass_input" placeholder="Wi-Fi password">
-  <button type="button" class="btn btn-primary" onclick="connectWifi()">🔗 Connect & Save</button>
-  <div id="connect_status"></div>
+  <input type="password" id="pass" placeholder="Wi-Fi password">
+  <button type="button" class="btn btn-primary" onclick="connect()">🔗 Connect & Save</button>
+  <div id="st"></div>
 </div>
-
-{% if msg %}
-<div class="status {{ 'ok' if ok else 'err' }}">{{ msg }}</div>
-{% endif %}
-
 <a class="back" href="/">← Back to dashboard</a>
-
 <script>
-async function scanNetworks(){
-  const list = document.getElementById('network_list');
-  list.innerHTML = '<div style="color:var(--muted);font-size:.85rem"><span class="spinner"></span>Scanning…</div>';
+async function scan(){
+  const l=document.getElementById('list');
+  l.innerHTML='<div style="color:var(--muted);font-size:.85rem;margin-top:8px"><span class="spin"></span>Scanning…</div>';
   try{
-    const r = await fetch('/wifi/scan');
-    const d = await r.json();
-    if(!d.networks || d.networks.length === 0){
-      list.innerHTML = '<div style="color:var(--muted);font-size:.85rem">No networks found. Try again.</div>';
-      return;
-    }
-    list.innerHTML = '';
+    const d=await(await fetch('/wifi/scan')).json();
+    if(!d.networks?.length){l.innerHTML='<div style="color:var(--muted);font-size:.85rem;margin-top:8px">No networks found.</div>';return;}
+    l.innerHTML='';
     for(const n of d.networks){
-      const bars = signalBars(n.signal);
-      const lock = n.secured ? '🔒' : '🔓';
-      const div = document.createElement('div');
-      div.className = 'network-item';
-      div.innerHTML = `
-        <div>
-          <div class="network-ssid">${n.ssid}</div>
-          <div class="network-meta">${lock} ${n.secured ? 'Secured' : 'Open'}</div>
-        </div>
-        <div style="text-align:right">
-          ${bars}
-          <div class="network-meta">${n.signal}%</div>
-        </div>`;
-      div.onclick = () => {
-        document.querySelectorAll('.network-item').forEach(el=>el.classList.remove('selected'));
-        div.classList.add('selected');
-        document.getElementById('ssid_input').value = n.ssid;
-        document.getElementById('pass_input').focus();
-      };
-      list.appendChild(div);
+      const e=document.createElement('div');e.className='net';
+      e.innerHTML=`<div><div class="net-name">${n.ssid}</div><div class="net-meta">${n.secured?'🔒':'🔓'} ${n.secured?'Secured':'Open'}</div></div><div class="net-meta">${n.signal}%</div>`;
+      e.onclick=()=>{document.querySelectorAll('.net').forEach(x=>x.classList.remove('sel'));e.classList.add('sel');document.getElementById('ssid').value=n.ssid;document.getElementById('pass').focus();};
+      l.appendChild(e);
     }
-  }catch(e){
-    list.innerHTML = '<div style="color:var(--red);font-size:.85rem">Scan failed. Try again.</div>';
-  }
+  }catch{l.innerHTML='<div style="color:var(--red);font-size:.85rem;margin-top:8px">Scan failed.</div>';}
 }
-
-function signalBars(pct){
-  const heights=[6,10,14,18];
-  const active = pct >= 75 ? 4 : pct >= 50 ? 3 : pct >= 25 ? 2 : 1;
-  return heights.map((h,i)=>`<span class="signal-bar" style="height:${h}px;background:${i<active?'#34d399':'#374151'};width:5px;display:inline-block;vertical-align:bottom;margin-right:2px"></span>`).join('');
-}
-
-async function connectWifi(){
-  const ssid = document.getElementById('ssid_input').value.trim();
-  const pass = document.getElementById('pass_input').value;
-  const status = document.getElementById('connect_status');
-  if(!ssid){ status.className='status err'; status.textContent='Please enter a network name.'; return; }
-  status.className='status loading';
-  status.innerHTML='<span class="spinner"></span>Connecting… this may take up to 30 seconds.';
+async function connect(){
+  const ssid=document.getElementById('ssid').value.trim(),pass=document.getElementById('pass').value,s=document.getElementById('st');
+  if(!ssid){s.className='st err';s.textContent='Enter a network name.';return;}
+  s.className='st loading';s.innerHTML='<span class="spin"></span>Connecting…';
   try{
-    const r = await fetch('/wifi/connect', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ssid, password: pass})
-    });
-    const d = await r.json();
-    if(d.ok){
-      status.className='status ok';
-      status.innerHTML='✅ Connected! The device will now switch to your Wi-Fi network.<br>Reconnect your device to your home network and access <strong>http://crypto-epaper.local:8080</strong>';
-    } else {
-      status.className='status err';
-      status.textContent='❌ Connection failed. Check the password and try again.';
-    }
-  }catch(e){
-    // If fetch fails, it may mean the device already switched networks
-    status.className='status ok';
-    status.innerHTML='✅ The device appears to have connected! Reconnect to your home Wi-Fi and access <strong>http://crypto-epaper.local:8080</strong>';
-  }
+    const d=await(await fetch('/wifi/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})})).json();
+    if(d.ok){s.className='st ok';s.innerHTML='✅ Connecting… Reconnect your device to home Wi-Fi then open <strong>http://crypto-epaper.local:8080</strong>';}
+    else{s.className='st err';s.textContent='❌ Failed — check the password.';}
+  }catch{s.className='st ok';s.innerHTML='✅ Sent — reconnect to your Wi-Fi and open <strong>http://crypto-epaper.local:8080</strong>';}
 }
-</script></body></html>
-"""
+</script></body></html>"""
 
-MAIN_HTML = """
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+
+# ── Main Page ──────────────────────────────────────────────────────────────────
+MAIN_HTML = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Crypto E-Paper</title>
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2d3147;--accent:#6c63ff;
       --text:#e2e8f0;--muted:#8892a4;--green:#34d399;--red:#f87171;--yellow:#fbbf24;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;
-     min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px;}
-h1{font-size:1.5rem;margin-bottom:4px;}
-.subtitle{color:var(--muted);font-size:.85rem;margin-bottom:28px;}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
-      padding:24px;width:100%;max-width:480px;margin-bottom:16px;}
-.card h2{font-size:1rem;color:var(--accent);margin-bottom:16px;}
-.ap-banner{background:#78350f;border:1px solid #d97706;border-radius:10px;
-           padding:14px 16px;margin-bottom:20px;width:100%;max-width:480px;
-           font-size:.85rem;line-height:1.6;}
-.ap-banner a{color:#fbbf24;font-weight:600;}
-label{display:block;color:var(--muted);font-size:.8rem;margin-bottom:4px;
-      margin-top:14px;text-transform:uppercase;letter-spacing:.05em;}
-select,input[type=number],input[type=text]{width:100%;background:var(--bg);
-  border:1px solid var(--border);color:var(--text);padding:10px 12px;
-  border-radius:8px;font-size:.95rem;}
-input[type=range]{width:100%;accent-color:var(--accent);margin-top:4px;}
-.toggle-row{display:flex;justify-content:space-between;align-items:center;
-            padding:10px 0;border-bottom:1px solid var(--border);}
-.toggle-row:last-child{border-bottom:none;}
-.toggle{position:relative;width:42px;height:24px;}
-.toggle input{opacity:0;width:0;height:0;}
-.slider{position:absolute;inset:0;background:var(--border);border-radius:24px;cursor:pointer;transition:.3s;}
-.slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;
-               background:white;border-radius:50%;transition:.3s;}
-input:checked+.slider{background:var(--accent);}
-input:checked+.slider:before{transform:translateX(18px);}
-.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;
-     font-size:1rem;font-weight:600;cursor:pointer;margin-top:8px;transition:opacity .2s;}
-.btn:hover{opacity:.85;}
-.btn-primary{background:var(--accent);color:white;}
-.btn-warn{background:#78350f;color:var(--yellow);}
-.btn-danger{background:#374151;color:var(--red);}
-.btn-green{background:#064e3b;color:var(--green);}
-.btn-sm{padding:8px 14px;font-size:.85rem;width:auto;display:inline-block;}
-.status{font-size:.82rem;text-align:center;margin-top:8px;}
-.status.ok{color:var(--green);} .status.err{color:var(--red);}
-.price-box{background:var(--bg);border-radius:8px;padding:16px;text-align:center;margin-bottom:16px;}
-.price-val{font-size:2rem;font-weight:700;}
-.price-change{font-size:.9rem;margin-top:4px;}
+     min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px 16px 40px;}
+
+/* header */
+h1{font-size:1.45rem;margin-bottom:2px;letter-spacing:-.01em;}
+.sub{color:var(--muted);font-size:.82rem;margin-bottom:18px;}
+
+/* price box */
+.price-box{background:var(--card);border:1px solid var(--border);border-radius:14px;
+           padding:22px 24px 18px;width:100%;max-width:480px;text-align:center;margin-bottom:14px;}
+.price-val{font-size:2.4rem;font-weight:700;line-height:1.1;}
+.price-change{font-size:.9rem;margin-top:6px;}
+.price-time{color:var(--muted);font-size:.72rem;margin-top:6px;}
 .up{color:var(--green);} .dn{color:var(--red);}
-.badge{display:inline-block;background:#78350f;color:var(--yellow);
-       border-radius:6px;padding:2px 8px;font-size:.75rem;margin-left:8px;}
-.preview-row{display:flex;gap:12px;margin-top:12px;}
-.preview-box{flex:1;border-radius:8px;padding:12px;text-align:center;cursor:pointer;
-             border:2px solid transparent;transition:.2s;font-size:.85rem;font-weight:600;}
-.preview-box.selected{border-color:var(--accent);}
-.preview-normal{background:#fff;color:#000;}
-.preview-inverted{background:#000;color:#fff;border:1px solid #444;}
-.morse-preview{background:var(--bg);border:1px solid var(--border);border-radius:8px;
-               padding:10px 12px;margin-top:8px;font-family:monospace;font-size:.82rem;
-               color:var(--green);min-height:40px;word-break:break-all;line-height:1.8;}
-.morse-preview .dot{display:inline-block;width:7px;height:7px;background:var(--green);
-                    border-radius:50%;margin:0 2px;vertical-align:middle;}
-.morse-preview .dash{display:inline-block;width:20px;height:7px;background:var(--green);
-                     border-radius:4px;margin:0 2px;vertical-align:middle;}
-.morse-preview .gap{display:inline-block;width:12px;vertical-align:middle;}
-.morse-type{font-size:.72rem;color:var(--muted);margin-top:4px;}
-.sound-row{display:flex;gap:8px;align-items:flex-end;margin-top:8px;}
-.sound-row .sound-input{flex:1;}
-.input-action-row{display:flex;gap:8px;margin-top:8px;}
-.input-action-row input{flex:1;}
-.hint{font-size:.75rem;color:var(--muted);margin-top:6px;line-height:1.5;}
-.divider{border:none;border-top:1px solid var(--border);margin:16px 0;}
-footer{color:var(--muted);font-size:.75rem;margin-top:24px;}
+
+/* banners */
+.ap-banner{background:#78350f;border:1px solid #d97706;border-radius:10px;
+           padding:11px 16px;margin-bottom:12px;width:100%;max-width:480px;font-size:.84rem;line-height:1.6;}
+.ap-banner a{color:#fbbf24;font-weight:600;}
+.flash{font-size:.82rem;text-align:center;padding:9px 14px;border-radius:8px;
+       margin-bottom:12px;width:100%;max-width:480px;}
+.flash.ok{background:#064e3b;color:var(--green);}
+.flash.err{background:#450a0a;color:var(--red);}
+
+/* accordion */
+.acc{width:100%;max-width:480px;border:1px solid var(--border);border-radius:12px;
+     overflow:hidden;margin-bottom:8px;}
+.acc-head{display:flex;justify-content:space-between;align-items:center;
+          padding:15px 18px;cursor:pointer;background:var(--card);user-select:none;
+          transition:background .15s;}
+.acc-head:hover{background:#1e2235;}
+.acc-head h2{font-size:.92rem;font-weight:600;display:flex;align-items:center;gap:8px;}
+.arr{color:var(--muted);font-size:.75rem;transition:transform .22s;}
+.open .arr{transform:rotate(180deg);}
+.acc-body{background:var(--card);border-top:1px solid var(--border);
+          max-height:0;overflow:hidden;transition:max-height .3s ease,padding .3s ease;padding:0 18px;}
+.acc-body.show{max-height:1400px;padding:18px;}
+
+/* form */
+label{display:block;color:var(--muted);font-size:.76rem;text-transform:uppercase;
+      letter-spacing:.06em;margin-bottom:4px;margin-top:13px;}
+label:first-child{margin-top:0;}
+select,input[type=number],input[type=text]{width:100%;background:var(--bg);
+  border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:.93rem;}
+input[type=range]{width:100%;accent-color:var(--accent);margin-top:4px;}
+.row{display:flex;gap:8px;align-items:center;}
+.row select,.row input{flex:1;margin-top:0;}
+.hr{border:none;border-top:1px solid var(--border);margin:14px 0;}
+.hint{font-size:.74rem;color:var(--muted);margin-top:5px;line-height:1.5;}
+
+/* toggle */
+.tog-row{display:flex;justify-content:space-between;align-items:center;
+         padding:10px 0;border-bottom:1px solid var(--border);}
+.tog-row:last-of-type{border-bottom:none;}
+.tog-row span{font-size:.9rem;}
+.tog{position:relative;width:42px;height:24px;flex-shrink:0;}
+.tog input{opacity:0;width:0;height:0;}
+.sl{position:absolute;inset:0;background:var(--border);border-radius:24px;cursor:pointer;transition:.25s;}
+.sl:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;
+           background:#fff;border-radius:50%;transition:.25s;}
+input:checked+.sl{background:var(--accent);}
+input:checked+.sl:before{transform:translateX(18px);}
+
+/* buttons */
+.btn{display:block;width:100%;padding:11px;border:none;border-radius:8px;
+     font-size:.92rem;font-weight:600;cursor:pointer;margin-top:10px;transition:opacity .2s;}
+.btn:hover{opacity:.85;}
+.btn-p{background:var(--accent);color:#fff;}
+.btn-g{background:#064e3b;color:var(--green);}
+.btn-r{background:#3b1515;color:var(--red);}
+.btn-y{background:#78350f;color:var(--yellow);}
+.btn-sm{padding:9px 14px;font-size:.82rem;width:auto;display:inline-block;margin-top:0;white-space:nowrap;}
+
+/* theme preview */
+.themes{display:flex;gap:10px;margin-top:10px;}
+.theme{flex:1;border-radius:8px;padding:12px;text-align:center;cursor:pointer;
+       border:2px solid transparent;transition:.2s;font-size:.85rem;font-weight:600;}
+.theme.sel{border-color:var(--accent);}
+.t-normal{background:#fff;color:#000;}
+.t-inv{background:#111;color:#fff;border:1px solid #444;}
+
+/* morse */
+.morse-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+           padding:10px 12px;margin-top:8px;font-size:.8rem;min-height:34px;
+           word-break:break-all;line-height:1.9;}
+.morse-desc{font-size:.72rem;color:var(--muted);margin-top:4px;}
+.dot{display:inline-block;width:7px;height:7px;background:var(--green);
+     border-radius:50%;margin:0 2px;vertical-align:middle;}
+.dsh{display:inline-block;width:20px;height:7px;background:var(--green);
+     border-radius:4px;margin:0 2px;vertical-align:middle;}
+.gap{display:inline-block;width:12px;vertical-align:middle;}
+
+/* wallet preview result */
+.wal-res{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+         padding:12px 14px;margin-top:10px;font-size:.88rem;line-height:1.8;display:none;}
+.wal-res.show{display:block;}
+
+/* badge */
+.badge{display:inline-block;border-radius:5px;padding:1px 7px;font-size:.7rem;
+       font-weight:600;margin-left:6px;vertical-align:middle;}
+.badge-blue{background:#1e3a5f;color:#60a5fa;}
+.badge-on{background:#064e3b;color:var(--green);}
+.badge-warn{background:#78350f;color:var(--yellow);}
+
+footer{color:var(--muted);font-size:.73rem;margin-top:28px;}
 </style></head><body>
+
 <h1>🖥️ Crypto E-Paper</h1>
-<p class="subtitle">Configuration panel — Raspberry Pi</p>
+<p class="sub">Configuration Panel</p>
 
 {% if ap_mode %}
 <div class="ap-banner">
-  📡 <strong>Access Point mode active</strong> — not connected to the internet.<br>
-  <a href="/wifi">→ Click here to configure your Wi-Fi network</a>
+  📡 <strong>No internet</strong> — connected via hotspot.<br>
+  <a href="/wifi">→ Configure Wi-Fi network</a>
 </div>
 {% endif %}
 
-{% if msg %}<div class="status {{ 'ok' if ok else 'err' }}">{{ msg }}</div>{% endif %}
+{% if msg %}
+<div class="flash {{ 'ok' if ok else 'err' }}">{{ msg }}</div>
+{% endif %}
 
-<!-- Current Price -->
-<div class="card"><h2>📊 Current Price</h2>
-  <div class="price-box">
-    <div class="price-val" id="pv">{% if ap_mode %}No internet{% else %}Loading…{% endif %}</div>
-    <div class="price-change" id="pc"></div>
-    <div style="color:var(--muted);font-size:.75rem;margin-top:6px" id="pt"></div>
+<!-- Live Price -->
+<div class="price-box">
+  <div class="price-val" id="pv">{% if ap_mode %}No internet{% else %}Loading…{% endif %}</div>
+  <div class="price-change" id="pc"></div>
+  <div class="price-time" id="pt"></div>
+</div>
+
+<!-- ① Display Mode + Wallet ──────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>📺 Display Mode
+      <span class="badge badge-blue">{{ 'Wallet' if cfg.get('display_mode')=='wallet' else 'Price' }}</span>
+    </h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body {% if cfg.get('display_mode')=='wallet' %}show{% endif %}">
+    <form method="POST" action="/save_mode">
+      <div class="tog-row">
+        <span>Show wallet instead of price</span>
+        <label class="tog">
+          <input type="checkbox" name="wallet_mode" id="wm_tog"
+            {{ 'checked' if cfg.get('display_mode')=='wallet' }}
+            onchange="document.getElementById('wal_sec').style.display=this.checked?'block':'none'">
+          <span class="sl"></span>
+        </label>
+      </div>
+
+      <div id="wal_sec" style="display:{{ 'block' if cfg.get('display_mode')=='wallet' else 'none' }}">
+        <label style="margin-top:14px">Network</label>
+        <select name="wallet_network" id="wnet">
+          <option value="bitcoin"  {{ 'selected' if cfg.get('wallet_network')=='bitcoin'  }}>Bitcoin (BTC)</option>
+          <option value="ethereum" {{ 'selected' if cfg.get('wallet_network')=='ethereum' }}>Ethereum (ETH)</option>
+          <option value="solana"   {{ 'selected' if cfg.get('wallet_network')=='solana'   }}>Solana (SOL)</option>
+        </select>
+
+        <label>Wallet Address</label>
+        <input type="text" name="wallet_address" id="waddr"
+               value="{{ cfg.get('wallet_address','') }}"
+               placeholder="Paste your public address here">
+        <div class="hint">Read-only — public address only, no private key needed.</div>
+
+        <div class="row" style="margin-top:10px">
+          <button type="button" class="btn btn-g btn-sm" onclick="previewWallet()">🔍 Preview Balance</button>
+        </div>
+        <div class="wal-res" id="wal_res"></div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+        <div style="font-size:.85rem;font-weight:600;margin-bottom:8px">📊 Display Priority</div>
+        <div class="themes">
+          <div class="theme {{ 'sel' if cfg.get('wallet_primary','crypto')=='crypto' else '' }}"
+               style="{{ 'background:#1a1d27;color:#e2e8f0;' if cfg.get('wallet_primary','crypto')=='crypto' else 'background:#111;color:#888;' }}border:2px solid {{ 'var(--accent)' if cfg.get('wallet_primary','crypto')=='crypto' else 'var(--border)' }}"
+               onclick="setWalletPrimary('crypto',this)">
+            🪙 Crypto big<br><small style="font-weight:400">USD small</small>
+          </div>
+          <div class="theme {{ 'sel' if cfg.get('wallet_primary','crypto')=='fiat' else '' }}"
+               style="{{ 'background:#1a1d27;color:#e2e8f0;' if cfg.get('wallet_primary','crypto')=='fiat' else 'background:#111;color:#888;' }}border:2px solid {{ 'var(--accent)' if cfg.get('wallet_primary','crypto')=='fiat' else 'var(--border)' }}"
+               onclick="setWalletPrimary('fiat',this)">
+            💵 USD big<br><small style="font-weight:400">Crypto small</small>
+          </div>
+        </div>
+        <input type="hidden" name="wallet_primary" id="wallet_primary_val"
+               value="{{ cfg.get('wallet_primary','crypto') }}">
+      </div>
+
+      <button type="submit" class="btn btn-p" style="margin-top:14px">💾 Save Display Mode</button>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+      <a href="/set_mode/qr" style="text-decoration:none">
+        <button type="button" class="btn btn-g">📷 Show QR Code now</button>
+      </a>
+    </form>
   </div>
 </div>
 
-<!-- Settings -->
-<form method="POST" action="/save">
-<div class="card"><h2>⚙️ Settings</h2>
-  <label>Cryptocurrency</label>
-  <select name="crypto">{% for id,name in cryptos %}
-    <option value="{{ id }}" {{ 'selected' if cfg.crypto==id }}>{{ name }}</option>
-  {% endfor %}</select>
-  <label>Fiat Currency</label>
-  <select name="fiat">{% for id,name in fiats %}
-    <option value="{{ id }}" {{ 'selected' if cfg.fiat==id }}>{{ name }}</option>
-  {% endfor %}</select>
-  <label>Update Interval</label>
-  <select name="interval_sec">{% for sec,lbl in intervals %}
-    <option value="{{ sec }}" {{ 'selected' if cfg.interval_sec==sec }}>{{ lbl }}</option>
-  {% endfor %}</select>
-  <button type="submit" class="btn btn-primary" style="margin-top:20px">💾 Save Settings</button>
-</div></form>
-
-<!-- Appearance -->
-<form method="POST" action="/save_display">
-<div class="card"><h2>🎨 Display Appearance</h2>
-  <label>Color Scheme</label>
-  <div class="preview-row">
-    <div class="preview-box preview-normal {{ 'selected' if not cfg.cores_invertidas }}"
-         onclick="selectTheme('normal')">
-      ☀️ Normal<br><small style="font-weight:400">Black bg · White text</small>
-    </div>
-    <div class="preview-box preview-inverted {{ 'selected' if cfg.cores_invertidas }}"
-         onclick="selectTheme('inverted')">
-      🌙 Inverted<br><small style="font-weight:400">White bg · Black text</small>
-    </div>
+<!-- ② Settings ───────────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>⚙️ Settings</h2>
+    <span class="arr">▼</span>
   </div>
-  <input type="hidden" name="cores_invertidas" id="theme_input"
-         value="{{ 'true' if cfg.cores_invertidas else 'false' }}">
-  <button type="submit" class="btn btn-primary" style="margin-top:16px">🎨 Apply Theme</button>
-</div></form>
-
-<!-- Price Alerts -->
-<form method="POST" action="/save_alertas">
-<div class="card"><h2>🔔 Price Alerts
-  {% if cfg.buzzer_ativo %}<span class="badge">ACTIVE</span>{% endif %}
-</h2>
-  <div class="toggle-row"><span>Buzzer enabled</span>
-    <label class="toggle">
-      <input type="checkbox" name="buzzer_ativo" {{ 'checked' if cfg.buzzer_ativo }}>
-      <span class="slider"></span>
-    </label>
+  <div class="acc-body">
+    <form method="POST" action="/save">
+      <label>Cryptocurrency</label>
+      <select name="crypto">
+        {% for id,name in cryptos %}
+        <option value="{{ id }}" {{ 'selected' if cfg.crypto==id }}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <label>Fiat Currency</label>
+      <select name="fiat">
+        {% for id,name in fiats %}
+        <option value="{{ id }}" {{ 'selected' if cfg.fiat==id }}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <label>Update Interval</label>
+      <select name="interval_sec">
+        {% for sec,lbl in intervals %}
+        <option value="{{ sec }}" {{ 'selected' if cfg.interval_sec==sec }}>{{ lbl }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-p">💾 Save Settings</button>
+    </form>
   </div>
-  <label>GPIO Pin</label>
-  <input type="number" name="buzzer_gpio" value="{{ cfg.buzzer_gpio }}" min="1" max="40">
-  <label>Alert if price ABOVE (0 = disabled)</label>
-  <input type="number" name="alerta_acima" value="{{ cfg.alerta_acima }}" min="0" step="100">
-  <label>Alert if price BELOW (0 = disabled)</label>
-  <input type="number" name="alerta_abaixo" value="{{ cfg.alerta_abaixo }}" min="0" step="100">
-  <hr class="divider">
-  <div style="color:var(--text);font-size:.9rem;font-weight:600;margin-bottom:4px">🔊 Alert Sounds</div>
-  <div class="hint">Use letters for Morse code or numbers for beep sequences (e.g. SOS, 3, 1,2,3)</div>
-  <label>📈 Sound when price goes ABOVE threshold</label>
-  <div class="sound-row">
-    <div class="sound-input">
-      <input type="text" name="sound_high" id="sound_high_input"
-             value="{{ cfg.get('sound_high', '3') }}"
-             placeholder="e.g. 3  or  SOS  or  1,2"
-             oninput="updateSoundPreview('sound_high_input','sound_high_preview','sound_high_type')">
-    </div>
-    <button type="button" class="btn btn-green btn-sm" onclick="testSound('sound_high_input')">▶ Test</button>
-  </div>
-  <div class="morse-preview" id="sound_high_preview">—</div>
-  <div class="morse-type" id="sound_high_type"></div>
-  <label>📉 Sound when price goes BELOW threshold</label>
-  <div class="sound-row">
-    <div class="sound-input">
-      <input type="text" name="sound_low" id="sound_low_input"
-             value="{{ cfg.get('sound_low', '5') }}"
-             placeholder="e.g. 5  or  SOS  or  3,1"
-             oninput="updateSoundPreview('sound_low_input','sound_low_preview','sound_low_type')">
-    </div>
-    <button type="button" class="btn btn-danger btn-sm" onclick="testSound('sound_low_input')">▶ Test</button>
-  </div>
-  <div class="morse-preview" id="sound_low_preview">—</div>
-  <div class="morse-type" id="sound_low_type"></div>
-  {% if cfg.alerta_disparado %}
-  <div style="color:var(--yellow);font-size:.85rem;margin-top:12px">⚠️ Alert already fired this cycle.</div>
-  {% endif %}
-  <button type="submit" class="btn btn-warn" style="margin-top:16px">🔔 Save Alerts</button>
-  <a href="/resetar_alerta"><button type="button" class="btn btn-danger">↺ Reset fired alert</button></a>
-</div></form>
-
-<!-- Custom Buzzer -->
-<div class="card"><h2>🎵 Buzzer — Custom Pattern</h2>
-  <label>Pattern</label>
-  <div class="input-action-row">
-    <input type="text" id="buzzer_pattern_input"
-           placeholder="e.g. SOS  |  BITCOIN  |  3  |  1,2,3"
-           value="{{ cfg.get('buzzer_pattern','') }}"
-           oninput="updatePreview(this.value)">
-    <button type="button" class="btn btn-green btn-sm" onclick="playNow()">▶ Play</button>
-  </div>
-  <div class="hint">💡 <strong>Letters</strong> → Morse &nbsp;|&nbsp; <strong>Numbers</strong> → beeps &nbsp;|&nbsp; <strong>1,3,2</strong> → groups</div>
-  <div class="morse-preview" id="morse_preview">Type something above to see the preview…</div>
-  <div class="morse-type" id="morse_type"></div>
-  <label style="margin-top:16px">Volume <span id="vol_label">{{ cfg.get('buzzer_volume', 80) }}%</span></label>
-  <input type="range" id="vol_range" min="1" max="95" step="5"
-         value="{{ cfg.get('buzzer_volume', 80) }}"
-         oninput="document.getElementById('vol_label').textContent=this.value+'%'">
-  <div class="hint">⚠️ Max 95% — at 100% PWM becomes DC and buzzer stops vibrating</div>
-  <label>Morse Speed (WPM) <span id="wpm_label">{{ cfg.get('buzzer_wpm', 15) }}</span></label>
-  <input type="range" id="wpm_range" min="5" max="30" step="1"
-         value="{{ cfg.get('buzzer_wpm', 15) }}"
-         oninput="document.getElementById('wpm_label').textContent=this.value">
-  <button type="button" class="btn btn-primary" style="margin-top:16px" onclick="saveBuzzer()">💾 Save Buzzer Settings</button>
 </div>
 
-<!-- Wi-Fi -->
-<div class="card"><h2>📡 Wi-Fi</h2>
-  <a href="/wifi"><button type="button" class="btn btn-primary">🔗 Configure Wi-Fi Network</button></a>
+<!-- ③ Appearance ─────────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>🎨 Appearance</h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body">
+    <form method="POST" action="/save_display">
+      <label>Color Scheme</label>
+      <div class="themes">
+        <div class="theme t-normal {{ 'sel' if not cfg.cores_invertidas }}" onclick="setTheme('false',this)">
+          ☀️ Normal<br><small style="font-weight:400">Black bg</small></div>
+        <div class="theme t-inv {{ 'sel' if cfg.cores_invertidas }}" onclick="setTheme('true',this)">
+          🌙 Inverted<br><small style="font-weight:400">White bg</small></div>
+      </div>
+      <input type="hidden" name="cores_invertidas" id="theme_val"
+             value="{{ 'true' if cfg.cores_invertidas else 'false' }}">
+      <button type="submit" class="btn btn-p">🎨 Apply Theme</button>
+    </form>
+  </div>
 </div>
 
-<!-- Service Control -->
-<div class="card"><h2>🔧 Service Control</h2>
-  <form method="POST" action="/service/restart">
-    <button type="submit" class="btn btn-primary">🔄 Restart Display</button></form>
-  <form method="POST" action="/service/stop">
-    <button type="submit" class="btn btn-danger">⏹ Stop Display</button></form>
-  <form method="POST" action="/service/start">
-    <button type="submit" class="btn btn-green">▶ Start Display</button></form>
+<!-- ④ Price Alerts ───────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>🔔 Price Alerts
+      {% if cfg.buzzer_ativo %}<span class="badge badge-on">ON</span>{% endif %}
+      {% if cfg.alerta_disparado %}<span class="badge badge-warn">FIRED</span>{% endif %}
+    </h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body {% if cfg.alerta_disparado %}show{% endif %}">
+    <form method="POST" action="/save_alertas">
+      <div class="tog-row">
+        <span>Buzzer enabled</span>
+        <label class="tog">
+          <input type="checkbox" name="buzzer_ativo" {{ 'checked' if cfg.buzzer_ativo }}>
+          <span class="sl"></span>
+        </label>
+      </div>
+      <label>GPIO Pin</label>
+      <input type="number" name="buzzer_gpio" value="{{ cfg.buzzer_gpio }}" min="1" max="40">
+      <label>Alert if price ABOVE (0 = off)</label>
+      <input type="number" name="alerta_acima" value="{{ cfg.alerta_acima }}" min="0" step="100">
+      <label>Alert if price BELOW (0 = off)</label>
+      <input type="number" name="alerta_abaixo" value="{{ cfg.alerta_abaixo }}" min="0" step="100">
+      <hr class="hr">
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:6px">🔊 Alert Sounds</div>
+      <div class="hint" style="margin-bottom:8px">Letters = Morse · Numbers = beeps · e.g. SOS · 3 · 1,2</div>
+
+      <label>📈 Sound when price goes ABOVE</label>
+      <div class="row">
+        <input type="text" name="sound_high" id="sh_in"
+               value="{{ cfg.get('sound_high','3') }}"
+               oninput="updSnd('sh_in','sh_pre','sh_dsc')">
+        <button type="button" class="btn btn-g btn-sm" onclick="testSnd('sh_in')">▶</button>
+      </div>
+      <div class="morse-box" id="sh_pre"></div>
+      <div class="morse-desc" id="sh_dsc"></div>
+
+      <label>📉 Sound when price goes BELOW</label>
+      <div class="row">
+        <input type="text" name="sound_low" id="sl_in"
+               value="{{ cfg.get('sound_low','5') }}"
+               oninput="updSnd('sl_in','sl_pre','sl_dsc')">
+        <button type="button" class="btn btn-r btn-sm" onclick="testSnd('sl_in')">▶</button>
+      </div>
+      <div class="morse-box" id="sl_pre"></div>
+      <div class="morse-desc" id="sl_dsc"></div>
+
+      <button type="submit" class="btn btn-y" style="margin-top:14px">🔔 Save Alerts</button>
+      <a href="/resetar_alerta" style="text-decoration:none">
+        <button type="button" class="btn btn-r">↺ Reset fired alert</button>
+      </a>
+    </form>
+  </div>
+</div>
+
+<!-- ⑤ Buzzer ─────────────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>🎵 Buzzer — Custom Pattern</h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body">
+    <label>Pattern</label>
+    <div class="row">
+      <input type="text" id="bz_in" placeholder="SOS · BITCOIN · 3 · 1,2,3"
+             value="{{ cfg.get('buzzer_pattern','') }}"
+             oninput="updPrev(this.value)">
+      <button type="button" class="btn btn-g btn-sm" onclick="playNow()">▶ Play</button>
+    </div>
+    <div class="hint">Letters → Morse &nbsp;|&nbsp; Numbers → beeps &nbsp;|&nbsp; 1,3,2 → groups</div>
+    <div class="morse-box" id="bz_pre" style="color:var(--green)">Type a pattern…</div>
+    <div class="morse-desc" id="bz_dsc"></div>
+
+    <label>Volume — <span id="vol_lbl">{{ cfg.get('buzzer_volume',80) }}%</span></label>
+    <input type="range" id="vol_r" min="1" max="95" step="5"
+           value="{{ cfg.get('buzzer_volume',80) }}"
+           oninput="document.getElementById('vol_lbl').textContent=this.value+'%'">
+    <div class="hint">⚠️ Max 95% — at 100% PWM becomes DC and buzzer stops</div>
+
+    <label>Morse Speed — <span id="wpm_lbl">{{ cfg.get('buzzer_wpm',15) }}</span> WPM</label>
+    <input type="range" id="wpm_r" min="5" max="30" step="1"
+           value="{{ cfg.get('buzzer_wpm',15) }}"
+           oninput="document.getElementById('wpm_lbl').textContent=this.value">
+
+    <button type="button" class="btn btn-p" onclick="saveBuzzer()">💾 Save Buzzer</button>
+  </div>
+</div>
+
+<!-- ⑥ Wi-Fi ──────────────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>📡 Wi-Fi</h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body">
+    <p class="hint" style="font-size:.84rem;line-height:1.7;margin-bottom:12px">
+      If the Pi loses Wi-Fi, it will try connecting to the fallback hotspot below.<br>
+      Create a hotspot on your phone with these credentials.
+    </p>
+    <label>Fallback Hotspot SSID</label>
+    <input type="text" id="ap_ssid" value="{{ cfg.get('ap_ssid','crypto-epaper') }}">
+    <label>Fallback Hotspot Password</label>
+    <input type="text" id="ap_pass" value="{{ cfg.get('ap_pass','bitcoin123') }}">
+    <button type="button" class="btn btn-y" onclick="saveHotspot()">💾 Save Hotspot Credentials</button>
+    <hr class="hr">
+    <a href="/wifi" style="text-decoration:none">
+      <button type="button" class="btn btn-p">🔗 Connect to a new Wi-Fi network</button>
+    </a>
+  </div>
+</div>
+
+<!-- ⑦ Service Control ────────────────────────────────────────────────────── -->
+<div class="acc">
+  <div class="acc-head" onclick="tog(this)">
+    <h2>🔧 Service Control</h2>
+    <span class="arr">▼</span>
+  </div>
+  <div class="acc-body">
+    <form method="POST" action="/service/restart" style="margin-bottom:0">
+      <button type="submit" class="btn btn-p">🔄 Restart Display</button></form>
+    <form method="POST" action="/service/stop" style="margin-bottom:0">
+      <button type="submit" class="btn btn-r">⏹ Stop Display</button></form>
+    <form method="POST" action="/service/start" style="margin-bottom:0">
+      <button type="submit" class="btn btn-g">▶ Start Display</button></form>
+  </div>
 </div>
 
 <footer>Crypto E-Paper · {{ now }}</footer>
 
 <script>
-const MORSE_TABLE = {
-  'A':'.-','B':'-...','C':'-.-.','D':'-..','E':'.','F':'..-.','G':'--.','H':'....','I':'..','J':'.---',
-  'K':'-.-','L':'.-..','M':'--','N':'-.','O':'---','P':'.--.','Q':'--.-','R':'.-.','S':'...','T':'-',
-  'U':'..-','V':'...-','W':'.--','X':'-..-','Y':'-.--','Z':'--..',
-  '0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....','6':'-....','7':'--...','8':'---..','9':'----.',
-  '.':'.-.-.-',',':'--..--','?':'..--..','!':'-.-.--'
-};
-function isNumericSeq(t){return /^[\d,\s]+$/.test(t.trim());}
-function renderMorseHTML(text){
+// ── Accordion ──────────────────────────────────────────────────────────────
+function tog(head){
+  const body=head.nextElementSibling;
+  const open=body.classList.toggle('show');
+  head.classList.toggle('open',open);
+}
+
+// ── Morse engine ───────────────────────────────────────────────────────────
+const MC={A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',
+  K:'-.-',L:'.-..',M:'--',N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',
+  U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..',
+  '0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....',
+  '6':'-....','7':'--...','8':'---..','9':'----.','.':'.-.-.-',',':'--..--','?':'..--..'};
+function isSeq(v){return /^[\d,\s]+$/.test(v.trim());}
+function morseHTML(txt){
   let h='';
-  for(const ch of text.toUpperCase()){
-    if(ch===' '){h+='<span style="display:inline-block;width:24px"></span>';continue;}
-    const c=MORSE_TABLE[ch];
-    if(!c){h+=`<span style="color:var(--red)">${ch}?</span> `;continue;}
-    h+=`<span style="color:var(--muted);font-size:.68rem;margin-right:1px">${ch}</span>`;
-    for(const s of c){if(s==='.')h+='<span class="dot"></span>';else h+='<span class="dash"></span>';}
+  for(const c of txt.toUpperCase()){
+    if(c===' '){h+='<span style="display:inline-block;width:22px"></span>';continue;}
+    const m=MC[c];
+    if(!m){h+=`<span style="color:var(--red)">${c}?</span> `;continue;}
+    h+=`<span style="color:var(--muted);font-size:.65rem;margin-right:1px">${c}</span>`;
+    for(const s of m)h+=s==='.'?'<span class="dot"></span>':'<span class="dsh"></span>';
     h+='<span class="gap"></span>';
   }
   return h;
 }
-function renderSeqHTML(nums){
-  return nums.map(n=>'🔔'.repeat(Math.min(n,15))+` <small style="color:var(--muted)">(${n}x)</small>`).join(' <span style="color:var(--muted)">→</span> ');
+function seqHTML(nums){
+  return nums.map(n=>'🔔'.repeat(Math.min(n,10))+`<small style="color:var(--muted);margin-left:3px">${n}x</small>`).join(' <span style="color:var(--border)">│</span> ');
 }
-function buildPreview(val){
-  if(!val||!val.trim())return{html:'—',desc:''};
-  if(isNumericSeq(val)){
-    const nums=val.trim().split(/[,\s]+/).filter(Boolean).map(Number).filter(n=>!isNaN(n)&&n>0);
-    if(nums.length)return{html:renderSeqHTML(nums),desc:`Beep sequence: ${nums.join(' → ')}`};
+function buildPrev(v){
+  if(!v?.trim())return{html:'',desc:''};
+  if(isSeq(v)){
+    const ns=v.trim().split(/[,\s]+/).filter(Boolean).map(Number).filter(n=>!isNaN(n)&&n>0);
+    if(ns.length)return{html:seqHTML(ns),desc:`Beep sequence: ${ns.join(' → ')}`};
   }
-  return{html:renderMorseHTML(val),desc:`Morse: ${[...val.toUpperCase()].map(c=>MORSE_TABLE[c]||'?').join(' ')}`};
+  return{html:morseHTML(v),desc:`Morse: ${[...v.toUpperCase()].map(c=>MC[c]||'?').join(' ')}`};
 }
-function updatePreview(val){
-  const p=buildPreview(val);
-  document.getElementById('morse_preview').innerHTML=p.html||'Type something above to see the preview…';
-  document.getElementById('morse_type').textContent=p.desc;
+function updPrev(v){
+  const p=buildPrev(v);
+  document.getElementById('bz_pre').innerHTML=p.html||'<span style="color:var(--muted)">Type a pattern…</span>';
+  document.getElementById('bz_dsc').textContent=p.desc;
 }
-function updateSoundPreview(iid,pid,tid){
-  const p=buildPreview(document.getElementById(iid).value);
-  document.getElementById(pid).innerHTML=p.html||'—';
-  document.getElementById(tid).textContent=p.desc;
+function updSnd(iid,pid,did){
+  const p=buildPrev(document.getElementById(iid).value);
+  document.getElementById(pid).innerHTML=p.html||'<span style="color:var(--muted)">—</span>';
+  document.getElementById(did).textContent=p.desc;
 }
-updatePreview(document.getElementById('buzzer_pattern_input').value);
-updateSoundPreview('sound_high_input','sound_high_preview','sound_high_type');
-updateSoundPreview('sound_low_input','sound_low_preview','sound_low_type');
+// init previews
+updPrev(document.getElementById('bz_in').value);
+updSnd('sh_in','sh_pre','sh_dsc');
+updSnd('sl_in','sl_pre','sl_dsc');
 
-async function testSound(inputId){
-  const pattern=document.getElementById(inputId).value.trim();
-  const volume=document.getElementById('vol_range').value;
-  const wpm=document.getElementById('wpm_range').value;
-  if(!pattern){alert('Enter a pattern first!');return;}
-  const btn=event.currentTarget; btn.textContent='⏳'; btn.disabled=true;
-  try{
-    const r=await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({pattern,volume:parseInt(volume),wpm:parseInt(wpm)})});
-    const d=await r.json(); btn.textContent=d.ok?'✅':'❌';
-  }catch(e){btn.textContent='❌';}
-  setTimeout(()=>{btn.textContent='▶ Test';btn.disabled=false;},2000);
+// ── Buzzer ─────────────────────────────────────────────────────────────────
+function getVW(){return{volume:parseInt(document.getElementById('vol_r').value),wpm:parseInt(document.getElementById('wpm_r').value)};}
+async function testSnd(iid){
+  const pat=document.getElementById(iid).value.trim();
+  if(!pat){flash('Enter a pattern first',false);return;}
+  const btn=event.currentTarget;btn.textContent='⏳';btn.disabled=true;
+  const {volume,wpm}=getVW();
+  try{const d=await(await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:pat,volume,wpm})})).json();btn.textContent=d.ok?'✅':'❌';}
+  catch{btn.textContent='❌';}
+  setTimeout(()=>{btn.textContent='▶';btn.disabled=false;},2000);
 }
 async function playNow(){
-  const pattern=document.getElementById('buzzer_pattern_input').value.trim();
-  const volume=document.getElementById('vol_range').value;
-  const wpm=document.getElementById('wpm_range').value;
-  if(!pattern){alert('Enter a pattern first!');return;}
-  const btn=event.currentTarget; btn.textContent='⏳'; btn.disabled=true;
-  try{
-    const r=await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({pattern,volume:parseInt(volume),wpm:parseInt(wpm)})});
-    const d=await r.json(); btn.textContent=d.ok?'✅':'❌';
-  }catch(e){btn.textContent='❌';}
-  setTimeout(()=>{btn.textContent='▶ Play';btn.disabled=false;},2000);
+  const pat=document.getElementById('bz_in').value.trim();
+  if(!pat){flash('Enter a pattern first',false);return;}
+  const btn=event.currentTarget;btn.textContent='⏳';btn.disabled=true;
+  const {volume,wpm}=getVW();
+  try{const d=await(await fetch('/buzzer/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:pat,volume,wpm})})).json();btn.textContent=d.ok?'✅':'❌';}
+  catch{btn.textContent='❌';}
+  setTimeout(()=>{btn.textContent='▶ Play';btn.disabled=false;},2500);
 }
 async function saveBuzzer(){
-  const r=await fetch('/buzzer/save',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      pattern:document.getElementById('buzzer_pattern_input').value.trim(),
-      volume:parseInt(document.getElementById('vol_range').value),
-      wpm:parseInt(document.getElementById('wpm_range').value)
-    })});
-  const d=await r.json();
-  showMsg(d.ok?'✅ Buzzer settings saved!':'❌ Save failed');
+  const {volume,wpm}=getVW();
+  const d=await(await fetch('/buzzer/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({pattern:document.getElementById('bz_in').value.trim(),volume,wpm})})).json();
+  flash(d.ok?'✅ Buzzer saved!':'❌ Save failed',d.ok);
 }
-function showMsg(text){
-  let el=document.querySelector('.flash-msg');
-  if(!el){el=document.createElement('div');el.className='status ok flash-msg';document.querySelector('h1').after(el);}
-  el.textContent=text; setTimeout(()=>el.remove(),3000);
+
+// ── Hotspot ────────────────────────────────────────────────────────────────
+async function saveHotspot(){
+  const ssid=document.getElementById('ap_ssid').value.trim(),pass=document.getElementById('ap_pass').value.trim();
+  if(!ssid||!pass){flash('SSID and password required',false);return;}
+  const d=await(await fetch('/hotspot/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ap_ssid:ssid,ap_pass:pass})})).json();
+  flash(d.ok?'✅ Hotspot credentials saved!':'❌ Save failed',d.ok);
 }
-function selectTheme(mode){
-  document.getElementById('theme_input').value=mode==='inverted'?'true':'false';
-  document.querySelectorAll('.preview-box').forEach(e=>e.classList.remove('selected'));
-  event.currentTarget.classList.add('selected');
+
+// ── Wallet preview ─────────────────────────────────────────────────────────
+async function previewWallet(){
+  const addr=document.getElementById('waddr').value.trim();
+  const net=document.getElementById('wnet').value;
+  const el=document.getElementById('wal_res');
+  if(!addr){el.className='wal-res show';el.style.color='var(--red)';el.textContent='Enter a wallet address first.';return;}
+  el.className='wal-res show';el.style.color='var(--muted)';el.textContent='Fetching balance…';
+  try{
+    const d=await(await fetch('/wallet/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:addr,network:net})})).json();
+    if(d.ok){el.style.color='var(--green)';el.innerHTML=`Balance: <strong>${d.balance}</strong><br>Value: <strong>${d.fiat_value}</strong>`;}
+    else{el.style.color='var(--red)';el.textContent='Error: '+d.error;}
+  }catch(e){el.style.color='var(--red)';el.textContent='Request failed: '+e.message;}
 }
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+function setTheme(val,el){
+  document.getElementById('theme_val').value=val;
+  document.querySelectorAll('.theme').forEach(e=>e.classList.remove('sel'));
+  el.classList.add('sel');
+}
+function setWalletPrimary(val,el){
+  document.getElementById('wallet_primary_val').value=val;
+  el.closest('.themes').querySelectorAll('.theme').forEach(e=>{
+    e.style.borderColor='var(--border)';e.style.color='#888';
+  });
+  el.style.borderColor='var(--accent)';el.style.color='var(--text)';
+}
+
+// ── Flash ──────────────────────────────────────────────────────────────────
+function flash(msg,ok=true){
+  let el=document.getElementById('_flash');
+  if(!el){el=document.createElement('div');el.id='_flash';el.style.cssText='position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:999;min-width:240px;text-align:center;';document.body.appendChild(el);}
+  el.className='flash '+(ok?'ok':'err');el.textContent=msg;el.style.display='block';
+  clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',3000);
+}
+
+// ── Live price ─────────────────────────────────────────────────────────────
 {% if not ap_mode %}
 async function refreshPrice(){
   try{
-    const r=await fetch('/api/price');const d=await r.json();
+    const d=await(await fetch('/api/price')).json();
     if(d.error){document.getElementById('pv').textContent='API error';return;}
     const p=d.price;
     document.getElementById('pv').textContent=d.fiat_symbol+(p>=1000?
       p.toLocaleString('en-US',{maximumFractionDigits:0}):
-      p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}));
-    const chg=d.change_24h;const el=document.getElementById('pc');
-    el.textContent=(chg>=0?'▲':'▼')+' '+Math.abs(chg).toFixed(2)+'%';
-    el.className='price-change '+(chg>=0?'up':'dn');
+      p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4}));
+    const c=d.change_24h,el=document.getElementById('pc');
+    el.textContent=(c>=0?'▲':'▼')+' '+Math.abs(c).toFixed(2)+'% (24h)';
+    el.className='price-change '+(c>=0?'up':'dn');
     document.getElementById('pt').textContent='Updated: '+new Date().toLocaleTimeString();
-  }catch(e){document.getElementById('pv').textContent='No connection';}
+  }catch{document.getElementById('pv').textContent='Offline';}
 }
 refreshPrice();setInterval(refreshPrice,60000);
 {% endif %}
-</script></body></html>
-"""
+</script></body></html>"""
 
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -638,6 +744,11 @@ def index():
     cfg.setdefault("buzzer_pattern",   "")
     cfg.setdefault("sound_high",       "3")
     cfg.setdefault("sound_low",        "5")
+    cfg.setdefault("display_mode",     "price")
+    cfg.setdefault("wallet_address",   "")
+    cfg.setdefault("wallet_network",   "bitcoin")
+    cfg.setdefault("ap_ssid",          "crypto-epaper")
+    cfg.setdefault("ap_pass",          "bitcoin123")
     return render_template_string(MAIN_HTML, cfg=cfg, cryptos=CRYPTOS, fiats=FIATS,
         intervals=INTERVALS, ap_mode=ap_is_active(),
         msg=request.args.get("msg", ""), ok=request.args.get("ok", "1") == "1",
@@ -646,16 +757,12 @@ def index():
 
 @app.route("/wifi")
 def wifi_page():
-    return render_template_string(WIFI_PAGE,
-        msg=request.args.get("msg", ""),
-        ok=request.args.get("ok", "1") == "1",
-        ssid=request.args.get("ssid", ""))
+    return render_template_string(WIFI_PAGE)
 
 
 @app.route("/wifi/scan")
 def wifi_scan():
-    networks = scan_wifi_networks()
-    return jsonify({"networks": networks})
+    return jsonify({"networks": scan_wifi_networks()})
 
 
 @app.route("/wifi/connect", methods=["POST"])
@@ -663,16 +770,11 @@ def wifi_connect():
     data     = request.get_json()
     ssid     = data.get("ssid", "").strip()
     password = data.get("password", "")
-
     if not ssid:
         return jsonify({"ok": False, "error": "SSID required"})
-
     def _connect():
         time.sleep(1)
-        success = connect_wifi(ssid, password)
-        if success:
-            log.info(f"Connected to '{ssid}' — AP will shut down on next watchdog cycle")
-
+        connect_wifi(ssid, password)
     threading.Thread(target=_connect, daemon=True).start()
     return jsonify({"ok": True})
 
@@ -692,7 +794,38 @@ def save_display():
     cfg = load_config()
     cfg["cores_invertidas"] = request.form.get("cores_invertidas", "false") == "true"
     save_config(cfg)
-    return redirect(url_for("index", msg="✅ Theme applied — takes effect on next update.", ok=1))
+    return redirect(url_for("index", msg="✅ Theme applied.", ok=1))
+
+
+@app.route("/set_mode/<mode>")
+def set_mode(mode):
+    if mode not in ("price", "wallet", "qr"):
+        return redirect(url_for("index", msg="Invalid mode.", ok=0))
+    cfg = load_config()
+    cfg["display_mode"] = mode
+    save_config(cfg)
+    # Restart display service so change takes effect immediately
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "crypto-epaper"], timeout=10)
+    except Exception as e:
+        log.warning(f"Could not restart display service: {e}")
+    labels = {"price": "Price", "wallet": "Wallet", "qr": "QR Code"}
+    return redirect(url_for("index", msg=f"✅ Switched to {labels[mode]} mode.", ok=1))
+
+
+@app.route("/save_mode", methods=["POST"])
+def save_mode():
+    cfg = load_config()
+    cfg["display_mode"]   = "wallet" if "wallet_mode" in request.form else "price"
+    cfg["wallet_network"] = request.form.get("wallet_network", "bitcoin")
+    cfg["wallet_address"] = request.form.get("wallet_address", "").strip()
+    cfg["wallet_primary"] = request.form.get("wallet_primary", "crypto")
+    save_config(cfg)
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "crypto-epaper"], timeout=10)
+    except Exception as e:
+        log.warning(f"Could not restart display service: {e}")
+    return redirect(url_for("index", msg="✅ Display mode saved!", ok=1))
 
 
 @app.route("/save_alertas", methods=["POST"])
@@ -731,13 +864,22 @@ def buzzer_play():
         return jsonify({"ok": False, "error": "Empty pattern"})
     def _play():
         try:
-            import sys
-            sys.path.insert(0, str(BASE_DIR))
+            import sys; sys.path.insert(0, str(BASE_DIR))
             from buzzer_controller import tocar_buzzer_custom
             tocar_buzzer_custom(gpio=gpio, texto=pattern, volume=volume, wpm=wpm)
         except Exception as e:
             log.error(f"Buzzer play error: {e}")
     threading.Thread(target=_play, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/hotspot/save", methods=["POST"])
+def hotspot_save():
+    cfg  = load_config()
+    data = request.get_json()
+    cfg["ap_ssid"] = data.get("ap_ssid", "crypto-epaper").strip()
+    cfg["ap_pass"] = data.get("ap_pass", "bitcoin123").strip()
+    save_config(cfg)
     return jsonify({"ok": True})
 
 
@@ -747,6 +889,45 @@ def resetar_alerta():
     cfg["alerta_disparado"] = False
     save_config(cfg)
     return redirect(url_for("index", msg="✅ Alert reset.", ok=1))
+
+
+@app.route("/wallet/preview", methods=["POST"])
+def wallet_preview():
+    import requests as req
+    data    = request.get_json()
+    address = data.get("address", "").strip()
+    network = data.get("network", "bitcoin")
+    cfg     = load_config()
+    sym     = {"usd":"$","brl":"R$","eur":"€","gbp":"£","jpy":"¥"}.get(cfg["fiat"], cfg["fiat"].upper())
+    try:
+        if network == "bitcoin":
+            r       = req.get(f"https://blockchain.info/q/addressbalance/{address}?confirmations=1", timeout=10)
+            balance = int(r.text.strip()) / 1e8
+            unit    = "BTC"
+        elif network == "ethereum":
+            r = req.get("https://api.etherscan.io/api",
+                params={"module":"account","action":"balance","address":address,"tag":"latest"}, timeout=10)
+            d = r.json()
+            if d.get("status") != "1":
+                return jsonify({"ok": False, "error": d.get("message", "API error")})
+            balance = int(d["result"]) / 1e18
+            unit    = "ETH"
+        elif network == "solana":
+            r       = req.post("https://api.mainnet-beta.solana.com",
+                json={"jsonrpc":"2.0","id":1,"method":"getBalance","params":[address]}, timeout=10)
+            balance = r.json()["result"]["value"] / 1e9
+            unit    = "SOL"
+        else:
+            return jsonify({"ok": False, "error": "Unknown network"})
+        pr       = req.get("https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": network, "vs_currencies": cfg["fiat"]}, timeout=10)
+        price    = pr.json().get(network, {}).get(cfg["fiat"], 0)
+        fiat_val = balance * price
+        bal_str  = f"{balance:.6f} {unit}" if balance < 1 else f"{balance:.4f} {unit}"
+        fiat_str = f"{sym}{fiat_val:,.2f}"
+        return jsonify({"ok": True, "balance": bal_str, "fiat_value": fiat_str})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/api/price")
@@ -763,7 +944,7 @@ def api_price():
             "change_24h":d.get(f"{cfg['fiat']}_24h_change",0),
             "fiat_symbol":sym,"crypto":cfg["crypto"]})
     except Exception as e:
-        return jsonify({"error":str(e)}),500
+        return jsonify({"error":str(e)}), 500
 
 
 @app.route("/service/<action>", methods=["POST"])
@@ -777,10 +958,10 @@ def service(action):
         return redirect(url_for("index", msg="Invalid action.", ok=0))
     try:
         subprocess.run(cmds[action], timeout=10, check=True)
-        labels={"restart":"restarted","stop":"stopped","start":"started"}
-        return redirect(url_for("index",msg=f"✅ Service {labels[action]}.",ok=1))
+        labels = {"restart":"restarted","stop":"stopped","start":"started"}
+        return redirect(url_for("index", msg=f"✅ Service {labels[action]}.", ok=1))
     except Exception as e:
-        return redirect(url_for("index",msg=f"Error: {e}",ok=0))
+        return redirect(url_for("index", msg=f"Error: {e}", ok=0))
 
 
 if __name__ == "__main__":
