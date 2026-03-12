@@ -13,5 +13,11 @@
   "sound_low": "5",
   "alerta_acima": 0,
   "alerta_abaixo": 0,
-  "alerta_disparado": false
+  "alerta_disparado": false,
+  "display_mode": "price",
+  "wallet_address": "",
+  "wallet_network": "bitcoin",
+  "wallet_primary": "crypto",
+  "ap_ssid": "crypto-epaper",
+  "ap_pass": "bitcoin123"
 }
